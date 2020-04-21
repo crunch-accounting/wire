@@ -18,15 +18,11 @@ package com.squareup.wire
 import com.squareup.wire.internal.RealGrpcCall
 import com.squareup.wire.internal.RealGrpcStreamingCall
 import okhttp3.Call
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
 
 actual class GrpcClient private constructor(
   internal val client: OkHttpClient,
-  internal val baseUrl: HttpUrl
+  internal val baseUrl: GrpcHttpUrl
 ) {
   actual fun <S : Any, R : Any> newCall(method: GrpcMethod<S, R>): GrpcCall<S, R> {
     return RealGrpcCall(this, method)
@@ -38,8 +34,8 @@ actual class GrpcClient private constructor(
     return RealGrpcStreamingCall(this, method)
   }
 
-  internal fun newCall(path: String, requestBody: RequestBody): Call {
-    return client.newCall(Request.Builder()
+  internal fun newCall(path: String, requestBody: GrpcRequestBody): Call {
+    return client.newCall(GrpcRequestBuilder()
         .url(baseUrl.resolve(path)!!)
         .addHeader("te", "trailers")
         .addHeader("grpc-trace-bin", "")
@@ -51,7 +47,7 @@ actual class GrpcClient private constructor(
 
   class Builder {
     private var client: OkHttpClient? = null
-    private var baseUrl: HttpUrl? = null
+    private var baseUrl: GrpcHttpUrl? = null
 
     fun client(client: OkHttpClient): Builder {
       this.client = client
@@ -63,7 +59,7 @@ actual class GrpcClient private constructor(
       return this
     }
 
-    fun baseUrl(url: HttpUrl): Builder {
+    fun baseUrl(url: GrpcHttpUrl): Builder {
       this.baseUrl = url
       return this
     }
