@@ -1,64 +1,80 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+    <modelVersion>4.0.0</modelVersion>
 
-  <parent>
-    <groupId>com.squareup.wire</groupId>
-    <artifactId>wire</artifactId>
-    <version>2.2.0</version>
-  </parent>
+    <parent>
+        <groupId>com.squareup.wire</groupId>
+        <artifactId>wire</artifactId>
+        <version>2.2.0</version>
+    </parent>
 
-  <groupId>uk.co.crunch</groupId>
-  <artifactId>wire-maven-plugin</artifactId>
-  <packaging>maven-plugin</packaging>
+    <groupId>uk.co.crunch</groupId>
+    <artifactId>wire-maven-plugin</artifactId>
+    <packaging>maven-plugin</packaging>
 
-  <dependencies>
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-core</artifactId>
-      <version>3.1.1</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven</groupId>
-      <artifactId>maven-plugin-api</artifactId>
-      <version>3.1.1</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.maven.plugin-tools</groupId>
-      <artifactId>maven-plugin-annotations</artifactId>
-      <version>3.2</version>
-    </dependency>
-    <dependency>
-      <groupId>com.squareup.wire</groupId>
-      <artifactId>wire-java-generator</artifactId>
-      <version>${project.version}</version>
-    </dependency>
-  </dependencies>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-core</artifactId>
+            <version>3.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-plugin-api</artifactId>
+            <version>3.1.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.plugin-tools</groupId>
+            <artifactId>maven-plugin-annotations</artifactId>
+            <version>3.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.wire</groupId>
+            <artifactId>wire-java-generator</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
 
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-plugin-plugin</artifactId>
-        <version>3.2</version>
-        <configuration>
-          <skipErrorNoDescriptorsFound>true</skipErrorNoDescriptorsFound>
-        </configuration>
-        <executions>
-          <execution>
-            <id>mojo-descriptor</id>
-            <goals>
-              <goal>descriptor</goal>
-            </goals>
-          </execution>
-          <execution>
-            <id>help-goal</id>
-            <goals>
-              <goal>helpmojo</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-plugin-plugin</artifactId>
+                <version>3.2</version>
+                <configuration>
+                    <skipErrorNoDescriptorsFound>true</skipErrorNoDescriptorsFound>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>mojo-descriptor</id>
+                        <goals>
+                            <goal>descriptor</goal>
+                        </goals>
+                    </execution>
+                    <execution>
+                        <id>help-goal</id>
+                        <goals>
+                            <goal>helpmojo</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- Definitions of the repository endpoints to use for RELEASE/SNAPSHOT deployments. -->
+    <!-- NOTE: The Id is the same for both to allow deploying of snapshots and releases agains the same credentials -->
+    <distributionManagement>
+            <!-- Publish versioned releases here, invoked when using 'mvn deploy' command -->
+            <repository>
+                    <id>nexus</id>
+                    <name>Crunch releases</name>
+                    <url>http://nexus.crunch.dev.local/content/repositories/releases/</url>
+            </repository>
+            <snapshotRepository>
+                    <id>nexus</id>
+                    <name>Internal Snapshots</name>
+                    <url>http://nexus.crunch.dev.local/content/repositories/snapshots/</url>
+            </snapshotRepository>
+    </distributionManagement>
 </project>
