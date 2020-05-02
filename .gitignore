@@ -27,3 +27,5 @@ wire-library/docs/contributing.md
 wire-library/docs/index.md
 
 local.properties
+
+wire-maven-plugin/target
