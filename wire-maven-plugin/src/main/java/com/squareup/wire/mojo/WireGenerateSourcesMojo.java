@@ -112,12 +112,12 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     PruningRules.Builder identifierSetBuilder = new PruningRules.Builder();
     if (includes != null) {
       for (String identifier : includes) {
-        identifierSetBuilder.include(identifier);
+        identifierSetBuilder.addRoot(identifier);
       }
     }
     if (excludes != null) {
       for (String identifier : excludes) {
-        identifierSetBuilder.exclude(identifier);
+        identifierSetBuilder.prune(identifier);
       }
     }
     return identifierSetBuilder.build();
@@ -130,10 +130,10 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     Schema prunedSchema = schema.prune(identifierSet);
     int newSize = countTypes(prunedSchema);
 
-    for (String rule : identifierSet.unusedIncludes()) {
+    for (String rule : identifierSet.unusedRoots()) {
       getLog().warn(String.format("Unused include: %s", rule));
     }
-    for (String rule : identifierSet.unusedExcludes()) {
+    for (String rule : identifierSet.unusedPrunes()) {
       getLog().warn(String.format("Unused exclude: %s", rule));
     }
 
