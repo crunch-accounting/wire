@@ -7,7 +7,7 @@ import com.squareup.javapoet.TypeSpec;
 import com.squareup.wire.java.JavaGenerator;
 import com.squareup.wire.java.Profile;
 import com.squareup.wire.java.ProfileLoader;
-import com.squareup.wire.schema.IdentifierSet;
+import com.squareup.wire.schema.PruningRules;
 import com.squareup.wire.schema.Location;
 import com.squareup.wire.schema.ProtoFile;
 import com.squareup.wire.schema.Schema;
@@ -80,7 +80,7 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
       Schema schema = loadSchema(directories, protoFilesList);
       Profile profile = loadProfile(schema);
 
-      IdentifierSet identifierSet = identifierSet();
+      PruningRules identifierSet = pruningRules();
       if (!identifierSet.isEmpty()) {
         schema = retainRoots(identifierSet, schema);
       }
@@ -108,8 +108,8 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     }
   }
 
-  private IdentifierSet identifierSet() {
-    IdentifierSet.Builder identifierSetBuilder = new IdentifierSet.Builder();
+  private PruningRules pruningRules() {
+    PruningRules.Builder identifierSetBuilder = new PruningRules.Builder();
     if (includes != null) {
       for (String identifier : includes) {
         identifierSetBuilder.include(identifier);
@@ -123,7 +123,7 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     return identifierSetBuilder.build();
   }
 
-  private Schema retainRoots(IdentifierSet identifierSet, Schema schema) {
+  private Schema retainRoots(PruningRules identifierSet, Schema schema) {
     Stopwatch stopwatch = Stopwatch.createStarted();
     int oldSize = countTypes(schema);
 
