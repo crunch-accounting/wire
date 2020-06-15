@@ -9,7 +9,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <wire-java-generator.version>3.2.1</wire-java-generator.version>
+        <wire-java-generator.version>3.2.2</wire-java-generator.version>
     </properties>
 
     <dependencies>
