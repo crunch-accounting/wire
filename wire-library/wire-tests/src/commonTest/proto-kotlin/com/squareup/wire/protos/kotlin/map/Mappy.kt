@@ -19,6 +19,7 @@ import kotlin.Nothing
 import kotlin.String
 import kotlin.collections.Map
 import kotlin.jvm.JvmField
+import kotlin.lazy
 import okio.ByteString
 
 class Mappy(
@@ -39,8 +40,9 @@ class Mappy(
   override fun equals(other: Any?): Boolean {
     if (other === this) return true
     if (other !is Mappy) return false
-    return unknownFields == other.unknownFields
-        && things == other.things
+    if (unknownFields != other.unknownFields) return false
+    if (things != other.things) return false
+    return true
   }
 
   override fun hashCode(): Int {
@@ -69,12 +71,14 @@ class Mappy(
       Mappy::class, 
       "type.googleapis.com/com.squareup.wire.protos.kotlin.map.Mappy"
     ) {
-      private val thingsAdapter: ProtoAdapter<Map<String, Thing>> =
-          ProtoAdapter.newMapAdapter(ProtoAdapter.STRING, Thing.ADAPTER)
+      private val thingsAdapter: ProtoAdapter<Map<String, Thing>> by lazy {
+          ProtoAdapter.newMapAdapter(ProtoAdapter.STRING, Thing.ADAPTER) }
 
-      override fun encodedSize(value: Mappy): Int = 
-        thingsAdapter.encodedSizeWithTag(1, value.things) +
-        value.unknownFields.size
+      override fun encodedSize(value: Mappy): Int {
+        var size = value.unknownFields.size
+        size += thingsAdapter.encodedSizeWithTag(1, value.things)
+        return size
+      }
 
       override fun encode(writer: ProtoWriter, value: Mappy) {
         thingsAdapter.encodeWithTag(writer, 1, value.things)

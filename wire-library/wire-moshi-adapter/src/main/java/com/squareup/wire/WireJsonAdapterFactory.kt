@@ -25,6 +25,7 @@ import okio.ByteString.Companion.decodeBase64
 import java.io.IOException
 import java.lang.reflect.ParameterizedType
 import java.lang.reflect.Type
+import java.lang.reflect.WildcardType
 import java.math.BigInteger
 import java.util.ArrayList
 
@@ -77,14 +78,23 @@ class WireJsonAdapterFactory private constructor(
   ): JsonAdapter<*>? {
     val rawType = Types.getRawType(type)
 
-    val nextAnnotations = Types.nextAnnotations(annotations, IdentityIfAbsent::class.java)
+    val nextAnnotations = Types.nextAnnotations(annotations, OmitIdentity::class.java)
     if (nextAnnotations != null) {
       return when (type) {
-        Int::class.javaObjectType -> INT_JSON_ADAPTER
-        Int::class.javaPrimitiveType -> INT_JSON_ADAPTER
-        String::class.java -> STRING_JSON_ADAPTER
+        Boolean::class.javaObjectType,
+        Boolean::class.javaPrimitiveType -> moshi.adapter<Boolean>(type).omitValue(false)
+        ByteString::class.javaObjectType -> BYTE_STRING_JSON_ADAPTER.omitValue(ByteString.EMPTY)
+        Double::class.javaObjectType,
+        Double::class.javaPrimitiveType -> moshi.adapter<Double>(type).omitValue(0.0)
+        Float::class.javaObjectType,
+        Float::class.javaPrimitiveType -> moshi.adapter<Float>(type).omitValue(0f)
+        Int::class.javaObjectType,
+        Int::class.javaPrimitiveType -> moshi.adapter<Int>(type).omitValue(0)
+        Long::class.javaObjectType,
+        Long::class.javaPrimitiveType -> moshi.adapter<Long>(type).omitValue(0L)
+        String::class.java -> moshi.adapter<String>(type).omitValue("")
         else -> moshi.adapter<Any>(type, nextAnnotations)
-      }
+      }.nullSafe()
     }
 
     if (Types.nextAnnotations(annotations, Uint64::class.java) != null) {
@@ -107,6 +117,15 @@ class WireJsonAdapterFactory private constructor(
     }
     if (rawType == AnyMessage::class.java) {
       return AnyMessageJsonAdapter(moshi, typeUrlToAdapter)
+    }
+    if (rawType == Duration::class.java) {
+      return DurationJsonAdapter.nullSafe()
+    }
+    if (rawType == Any::class.java ||
+        rawType == Unit::class.java ||
+        type.isMapStringStar() ||
+        type.isListStar()) {
+      return StructJsonAdapter.serializeNulls()
     }
     return if (Message::class.java.isAssignableFrom(rawType)) {
       MessageJsonAdapter<Nothing, Nothing>(moshi, type)
@@ -157,26 +176,6 @@ class WireJsonAdapterFactory private constructor(
       }
     }.nullSafe()
 
-    /** Emit null instead of 0, which will cause Wire to omit the value altogether. */
-    internal val INT_JSON_ADAPTER = object : JsonAdapter<Int>() {
-      override fun fromJson(reader: JsonReader): Int = reader.nextInt()
-
-      override fun toJson(writer: JsonWriter, value: Int?) {
-        if (value == 0) writer.nullValue()
-        else writer.value(value)
-      }
-    }.nullSafe()
-
-    /** Emit null instead of "", which will cause Wire to omit the value altogether. */
-    internal val STRING_JSON_ADAPTER = object : JsonAdapter<String>() {
-      override fun fromJson(reader: JsonReader): String = reader.nextString()
-
-      override fun toJson(writer: JsonWriter, value: String?) {
-        if (value == "") writer.nullValue()
-        else writer.value(value)
-      }
-    }.nullSafe()
-
     /**
      * Tragically Moshi doesn't know enough to follow a `@Uint64 List<Long>` really wants to be
      * treated as a `List<@Uint64 Long>` and so we have to do it manually.
@@ -205,5 +204,34 @@ class WireJsonAdapterFactory private constructor(
         writer.endArray()
       }
     }.nullSafe()
+
+    /** Returns true if [this] is a `Map<String, *>`. */
+    private fun Type.isMapStringStar(): Boolean {
+      if (this !is ParameterizedType) return false
+      if (rawType != Map::class.java) return false
+
+      val keyType = actualTypeArguments[0]
+      val valueType = actualTypeArguments[1]
+      if (keyType != String::class.java) return false
+
+      if (valueType !is WildcardType) return false
+      if (valueType.lowerBounds.isNotEmpty()) return false
+      if (valueType.upperBounds != Object::class.java) return false
+
+      return true
+    }
+
+    /** Returns true if [this] is a `List<*>`. */
+    private fun Type.isListStar(): Boolean {
+      if (this !is ParameterizedType) return false
+      if (rawType != List::class.java) return false
+
+      val valueType = actualTypeArguments[0]
+      if (valueType !is WildcardType) return false
+      if (valueType.lowerBounds.isNotEmpty()) return false
+      if (valueType.upperBounds != Object::class.java) return false
+
+      return true
+    }
   }
 }

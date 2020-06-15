@@ -38,6 +38,7 @@ import com.squareup.kotlinpoet.ParameterSpec
 import com.squareup.kotlinpoet.ParameterizedTypeName
 import com.squareup.kotlinpoet.ParameterizedTypeName.Companion.parameterizedBy
 import com.squareup.kotlinpoet.PropertySpec
+import com.squareup.kotlinpoet.STAR
 import com.squareup.kotlinpoet.STRING
 import com.squareup.kotlinpoet.TypeName
 import com.squareup.kotlinpoet.TypeSpec
@@ -89,7 +90,7 @@ import java.util.Locale
 
 class KotlinGenerator private constructor(
   val schema: Schema,
-  private val nameToKotlinName: Map<ProtoType, ClassName>,
+  private val nameToKotlinName: Map<ProtoType, TypeName>,
   private val emitAndroid: Boolean,
   private val javaInterOp: Boolean,
   private val rpcCallStyle: RpcCallStyle,
@@ -109,7 +110,7 @@ class KotlinGenerator private constructor(
     get() = type().typeName
 
   /** Returns the full name of the class generated for [type].  */
-  fun generatedTypeName(type: Type) = type.typeName
+  fun generatedTypeName(type: Type) = type.typeName as ClassName
 
   /**
    * Returns the full name of the class generated for [service]#[rpc]. This returns a name like
@@ -120,7 +121,7 @@ class KotlinGenerator private constructor(
     rpc: Rpc? = null,
     isImplementation: Boolean = false
   ): ClassName {
-    val typeName = service.serviceName
+    val typeName = service.serviceName as ClassName
     val simpleName = buildString {
       if (isImplementation) {
         append("Grpc")
@@ -166,7 +167,8 @@ class KotlinGenerator private constructor(
     result[interfaceName] = interfaceSpec
 
     if (rpcRole == RpcRole.CLIENT) {
-      val (implementationName, implementationSpec) = generateService(service, onlyRpc, isImplementation = true)
+      val (implementationName, implementationSpec) = generateService(service, onlyRpc,
+          isImplementation = true)
       result[implementationName] = implementationSpec
     }
 
@@ -369,7 +371,7 @@ class KotlinGenerator private constructor(
   }
 
   private fun generateMessage(type: MessageType): TypeSpec {
-    val className = type.typeName
+    val className = type.typeName as ClassName
     val builderClassName = className.nestedClass("Builder")
     val nameAllocator = nameAllocator(type)
     val adapterName = nameAllocator["ADAPTER"]
@@ -473,8 +475,9 @@ class KotlinGenerator private constructor(
   // override fun equals(other: Any?): Boolean {
   //   if (other === this) return true
   //   if (other !is SimpleMessage) return false
-  //   return unknownFields == other.unknownFields
-  //       && optional_int32 == other.optional_int32
+  //   if (unknownFields != other.unknownFields) return false
+  //   if (optional_int32 != other.optional_int32) return false
+  //   return true
   // }
   private fun generateEqualsMethod(type: MessageType, nameAllocator: NameAllocator): FunSpec {
     val localNameAllocator = nameAllocator.copy()
@@ -486,15 +489,16 @@ class KotlinGenerator private constructor(
         .returns(BOOLEAN)
 
     val body = buildCodeBlock {
-      addStatement("if (%N === this) return true", otherName)
+      addStatement("if (%N === this) return·true", otherName)
       addStatement("if (%N !is %T) return·false", otherName, kotlinType)
-      add("«return unknownFields == %N.unknownFields", otherName)
+      addStatement("if (unknownFields != %N.unknownFields) return·false", otherName)
+
       val fields = type.fieldsAndOneOfFields
       for (field in fields) {
         val fieldName = localNameAllocator[field]
-        add("\n&& %1L·== %2N.%1L", fieldName, otherName)
+        addStatement("if (%1L != %2N.%1L) return·false", fieldName, otherName)
       }
-      add("\n»")
+      addStatement("return true")
     }
     result.addCode(body)
 
@@ -572,7 +576,7 @@ class KotlinGenerator private constructor(
     val fieldNames = mutableListOf<String>()
     for (field in type.fieldsAndOneOfFields) {
       val fieldName = nameAllocator[field]
-      result.addParameter(ParameterSpec.builder(fieldName, field.typeName)
+      result.addParameter(ParameterSpec.builder(fieldName, field.typeNameForMessageField)
           .defaultValue("this.%N", fieldName)
           .build())
       fieldNames += fieldName
@@ -637,7 +641,7 @@ class KotlinGenerator private constructor(
     type.fieldsAndOneOfFields.forEach { field ->
       val fieldName = nameAllocator[field]
 
-      val propertyBuilder = PropertySpec.builder(fieldName, field.declarationClass)
+      val propertyBuilder = PropertySpec.builder(fieldName, field.typeNameForBuilderField)
           .mutable(true)
           .initializer(field.identityValue)
 
@@ -676,7 +680,7 @@ class KotlinGenerator private constructor(
   ): FunSpec {
     val fieldName = nameAllocator[field]
     val funBuilder = FunSpec.builder(fieldName)
-        .addParameter(fieldName, field.getClass())
+        .addParameter(fieldName, field.typeNameForBuilderSetter())
         .returns(builderType)
     if (field.documentation.isNotBlank()) {
       funBuilder.addKdoc("%L\n", field.documentation.sanitizeKdoc())
@@ -725,7 +729,7 @@ class KotlinGenerator private constructor(
     val fields = message.fieldsAndOneOfFields
 
     fields.forEach { field ->
-      val fieldClass = field.typeName
+      val fieldClass = field.typeNameForMessageField
       val fieldName = nameAllocator[field]
 
       val parameterSpec = ParameterSpec.builder(fieldName, fieldClass)
@@ -781,12 +785,21 @@ class KotlinGenerator private constructor(
           }
         }
         .apply {
-          if (!field.isOptional) {
-            if (field.isPacked) {
-              addMember("label = %T.PACKED", WireField.Label::class)
-            } else if (field.label != null) {
-              addMember("label = %T.%L", WireField.Label::class, field.label!!)
-            }
+          val wireFieldLabel: WireField.Label? =
+              when (field.encodeMode!!) {
+                EncodeMode.REQUIRED ->
+                  WireField.Label.REQUIRED
+                EncodeMode.OMIT_IDENTITY ->
+                  WireField.Label.OMIT_IDENTITY
+                EncodeMode.REPEATED ->
+                  WireField.Label.REPEATED
+                EncodeMode.PACKED ->
+                  WireField.Label.PACKED
+                EncodeMode.MAP,
+                EncodeMode.NULL_IF_ABSENT -> null
+              }
+          if (wireFieldLabel != null) {
+            addMember("label = %T.%L", WireField.Label::class, wireFieldLabel)
           }
         }
         .apply { if (field.isRedacted) addMember("redacted = true") }
@@ -796,12 +809,12 @@ class KotlinGenerator private constructor(
             addMember("declaredName = %S", field.name)
           }
         }
+        .apply {
+          if (field.jsonName != field.name) {
+            addMember("jsonName = %S", field.jsonName!!)
+          }
+        }
         .build()
-  }
-
-  private fun ProtoType.adapterString() = when {
-    isScalar -> ProtoAdapter::class.java.name + '#' + toString().toUpperCase(Locale.US)
-    else -> typeName.reflectionName() + "#ADAPTER"
   }
 
   private fun generateToStringMethod(type: MessageType, nameAllocator: NameAllocator): FunSpec {
@@ -861,7 +874,7 @@ class KotlinGenerator private constructor(
       val default = field.default ?: continue
 
       val fieldName = "DEFAULT_" + nameAllocator[field].toUpperCase(Locale.US)
-      val fieldType = field.getClass().copy(nullable = false)
+      val fieldType = field.typeNameForMessageField.copy(nullable = false)
       val fieldValue = defaultFieldInitializer(field.type!!, default)
       companionBuilder.addProperty(
           PropertySpec.builder(fieldName, fieldType)
@@ -1005,9 +1018,12 @@ class KotlinGenerator private constructor(
         .parameterizedBy(Map::class.asTypeName()
             .parameterizedBy(keyType.typeName, valueType.typeName))
 
+    // Map adapters have to be lazy in order to avoid a circular reference when its value type
+    // is the same as its enclosing type.
     return PropertySpec.builder("${name}Adapter", adapterType, PRIVATE)
-        .initializer(
-            "%T.newMapAdapter(%L, %L)",
+        .delegate(
+            "%M { %T.newMapAdapter(%L, %L) }",
+            MemberName("kotlin", "lazy"),
             ProtoAdapter::class,
             keyType.getAdapterName(),
             valueType.getAdapterName()
@@ -1017,14 +1033,20 @@ class KotlinGenerator private constructor(
 
   private fun encodedSizeFun(message: MessageType): FunSpec {
     val className = generatedTypeName(message)
-    val nameAllocator = nameAllocator(message)
+    val localNameAllocator = nameAllocator(message).copy()
+    val sizeName = localNameAllocator.newName("size")
+
     val body = buildCodeBlock {
-      add("return \n⇥")
+      addStatement("var %N = value.unknownFields.size", sizeName)
       message.fieldsAndOneOfFields.forEach { field ->
-        val fieldName = nameAllocator[field]
-        add("%L.encodedSizeWithTag(%L, value.%L) +\n", adapterFor(field), field.tag, fieldName)
+        val fieldName = localNameAllocator[field]
+        if (field.encodeMode == EncodeMode.OMIT_IDENTITY) {
+          add("if (value.%1L != %2L) ", fieldName, field.identityValue)
+        }
+        addStatement("%N += %L.encodedSizeWithTag(%L, value.%L)", sizeName, adapterFor(field),
+            field.tag, fieldName)
       }
-      add("value.unknownFields.size⇤\n")
+      addStatement("return %N", sizeName)
     }
     return FunSpec.builder("encodedSize")
         .addParameter("value", className)
@@ -1050,7 +1072,7 @@ class KotlinGenerator private constructor(
 
       message.fieldsAndOneOfFields.forEach { field ->
         val fieldName = nameAllocator[field]
-        if (field.encodeMode == EncodeMode.IDENTITY_IF_ABSENT) {
+        if (field.encodeMode == EncodeMode.OMIT_IDENTITY) {
           add("if (value.%L != %L) ", fieldName, field.identityValue)
         }
         addStatement("%L.encodeWithTag(writer, %L, value.%L)",
@@ -1222,7 +1244,7 @@ class KotlinGenerator private constructor(
   // TODO add support for custom adapters.
   private fun Field.getAdapterName(nameDelimiter: Char = '.'): CodeBlock {
     return if (type!!.isMap) {
-      CodeBlock.of("%N", name + "Adapter")
+      CodeBlock.of("%N", "${name}Adapter")
     } else {
       type!!.getAdapterName(nameDelimiter)
     }
@@ -1230,13 +1252,42 @@ class KotlinGenerator private constructor(
 
   private fun ProtoType.getAdapterName(adapterFieldDelimiterName: Char = '.'): CodeBlock {
     return when {
-      isScalar -> CodeBlock.of(
-          "%T$adapterFieldDelimiterName%L",
-          ProtoAdapter::class, simpleName.toUpperCase(Locale.US)
-      )
-      isMap -> throw IllegalArgumentException("Can't create single adapter for map type $this")
-      else -> CodeBlock.of("%T${adapterFieldDelimiterName}ADAPTER", typeName)
+      isScalar -> {
+        CodeBlock.of("%T$adapterFieldDelimiterName%L",
+            ProtoAdapter::class, simpleName.toUpperCase(Locale.US))
+      }
+      this == ProtoType.DURATION -> {
+        CodeBlock.of("%T${adapterFieldDelimiterName}DURATION", ProtoAdapter::class)
+      }
+      this == ProtoType.STRUCT_MAP -> {
+        CodeBlock.of("%T${adapterFieldDelimiterName}STRUCT_MAP", ProtoAdapter::class)
+      }
+      this == ProtoType.STRUCT_VALUE -> {
+        CodeBlock.of("%T${adapterFieldDelimiterName}STRUCT_VALUE", ProtoAdapter::class)
+      }
+      this == ProtoType.STRUCT_NULL -> {
+        CodeBlock.of("%T${adapterFieldDelimiterName}STRUCT_NULL", ProtoAdapter::class)
+      }
+      this == ProtoType.STRUCT_LIST -> {
+        CodeBlock.of("%T${adapterFieldDelimiterName}STRUCT_LIST", ProtoAdapter::class)
+      }
+      isMap -> {
+        throw IllegalArgumentException("Can't create single adapter for map type $this")
+      }
+      else -> {
+        CodeBlock.of("%T${adapterFieldDelimiterName}ADAPTER", typeName)
+      }
     }
+  }
+
+  private fun ProtoType.adapterString() = when {
+    isScalar -> ProtoAdapter::class.java.name + '#' + simpleName.toUpperCase(Locale.US)
+    this == ProtoType.DURATION -> ProtoAdapter::class.java.name + "#DURATION"
+    this == ProtoType.STRUCT_MAP -> ProtoAdapter::class.java.name + "#STRUCT_MAP"
+    this == ProtoType.STRUCT_VALUE -> ProtoAdapter::class.java.name + "#STRUCT_VALUE"
+    this == ProtoType.STRUCT_NULL -> ProtoAdapter::class.java.name + "#STRUCT_NULL"
+    this == ProtoType.STRUCT_LIST -> ProtoAdapter::class.java.name + "#STRUCT_LIST"
+    else -> (typeName as ClassName).reflectionName() + "#ADAPTER"
   }
 
   /**
@@ -1282,8 +1333,8 @@ class KotlinGenerator private constructor(
       constant.options.map.keys.forEach { protoMember ->
         if (allOptionFieldsBuilder.add(protoMember)) {
           val optionField = schema.getField(protoMember)!!
-          primaryConstructor.addParameter(optionField.name, optionField.typeName)
-          builder.addProperty(PropertySpec.builder(optionField.name, optionField.typeName)
+          primaryConstructor.addParameter(optionField.name, optionField.typeNameForMessageField)
+          builder.addProperty(PropertySpec.builder(optionField.name, optionField.typeNameForMessageField)
               .initializer(optionField.name)
               .build())
         }
@@ -1401,7 +1452,7 @@ class KotlinGenerator private constructor(
   }
 
   private fun generateEnclosing(type: EnclosingType): TypeSpec {
-    val classBuilder = TypeSpec.classBuilder(type.typeName)
+    val classBuilder = TypeSpec.classBuilder(type.typeName as ClassName)
         .primaryConstructor(FunSpec.constructorBuilder().addModifiers(PRIVATE).build())
 
     type.nestedTypes.forEach { classBuilder.addType(generateType(it)) }
@@ -1413,15 +1464,18 @@ class KotlinGenerator private constructor(
     isRepeated -> CodeBlock.of("val $allocatedName = mutableListOf<%T>()", type!!.typeName)
     isMap -> CodeBlock.of("val $allocatedName = mutableMapOf<%T, %T>()",
         keyType.typeName, valueType.typeName)
-    else -> CodeBlock.of("var $allocatedName: %T = %L", declarationClass, identityValue)
+    else -> CodeBlock.of("var $allocatedName: %T = %L", typeNameForBuilderField, identityValue)
   }
 
-  private val Field.declarationClass: TypeName
-    get() = when {
-      isRepeated || isMap -> getClass()
-      else -> {
-        val nullable = encodeMode != EncodeMode.IDENTITY_IF_ABSENT || acceptsNull
-        getClass().copy(nullable = nullable)
+  private val Field.typeNameForBuilderField: TypeName
+    get() {
+      val typeNameForBuilderSetter = typeNameForBuilderSetter()
+      return when {
+        isRepeated || isMap -> typeNameForBuilderSetter
+        else -> {
+          val nullable = encodeMode != EncodeMode.OMIT_IDENTITY || acceptsNull
+          typeNameForBuilderSetter.copy(nullable = nullable)
+        }
       }
     }
 
@@ -1431,29 +1485,31 @@ class KotlinGenerator private constructor(
     else -> nameToKotlinName.getValue(this)
   }
 
-  private fun Field.getClass(baseClass: TypeName = type!!.asTypeName()): TypeName {
+  private fun Field.typeNameForBuilderSetter(baseClass: TypeName = type!!.asTypeName()): TypeName {
+    if (type == ProtoType.STRUCT_NULL) return baseClass
     return when (encodeMode!!) {
       EncodeMode.REPEATED,
       EncodeMode.PACKED -> List::class.asClassName().parameterizedBy(baseClass)
       EncodeMode.MAP -> baseClass.copy(nullable = false)
-      EncodeMode.NULL_IF_ABSENT -> {
-        if (isOneOf) baseClass.copy(nullable = false)
-        else baseClass.copy(nullable = true)
-      }
+      EncodeMode.NULL_IF_ABSENT -> baseClass.copy(nullable = true)
       else -> baseClass.copy(nullable = false)
     }
   }
 
-  private val Field.typeName: TypeName
+  private val Field.typeNameForMessageField: TypeName
     get() {
+      if (type == ProtoType.STRUCT_MAP) return type!!.typeName
+      if (type == ProtoType.STRUCT_LIST) return type!!.typeName
+      if (type == ProtoType.STRUCT_VALUE) return type!!.typeName.copy(nullable = true)
+      if (type == ProtoType.STRUCT_NULL) return type!!.typeName.copy(nullable = true)
       return when (encodeMode!!) {
         EncodeMode.MAP ->
           Map::class.asTypeName().parameterizedBy(keyType.typeName, valueType.typeName)
         EncodeMode.REPEATED,
         EncodeMode.PACKED -> List::class.asClassName().parameterizedBy(type!!.typeName)
         EncodeMode.NULL_IF_ABSENT -> type!!.typeName.copy(nullable = true)
-        EncodeMode.THROW_IF_ABSENT -> type!!.typeName
-        EncodeMode.IDENTITY_IF_ABSENT -> {
+        EncodeMode.REQUIRED -> type!!.typeName
+        EncodeMode.OMIT_IDENTITY -> {
           when {
             isOneOf -> type!!.typeName.copy(nullable = true)
             type!!.isMessage -> type!!.typeName.copy(nullable = true)
@@ -1465,12 +1521,16 @@ class KotlinGenerator private constructor(
 
   private val Field.identityValue: CodeBlock
     get() {
+      if (type == ProtoType.STRUCT_MAP) return CodeBlock.of("emptyMap<String, Any>()")
+      if (type == ProtoType.STRUCT_LIST) return CodeBlock.of("emptyList<Any>()")
+      if (type == ProtoType.STRUCT_VALUE) return CodeBlock.of("null")
+      if (type == ProtoType.STRUCT_NULL) return CodeBlock.of("null")
       return when (encodeMode!!) {
         EncodeMode.MAP -> CodeBlock.of("emptyMap()")
         EncodeMode.REPEATED,
         EncodeMode.PACKED -> CodeBlock.of("emptyList()")
         EncodeMode.NULL_IF_ABSENT -> CodeBlock.of("null")
-        EncodeMode.IDENTITY_IF_ABSENT -> {
+        EncodeMode.OMIT_IDENTITY -> {
           if (isOneOf) return CodeBlock.of("null")
           val protoType = type!!
           val type: Type? = schema.getType(protoType)
@@ -1502,19 +1562,23 @@ class KotlinGenerator private constructor(
           }
         }
         // We run this code even if when we're not using the default value so we return something.
-        EncodeMode.THROW_IF_ABSENT -> CodeBlock.of("null")
+        EncodeMode.REQUIRED -> CodeBlock.of("null")
       }
     }
 
   private val Field.acceptsNull: Boolean
     get() {
+      if (type == ProtoType.STRUCT_MAP) return false
+      if (type == ProtoType.STRUCT_LIST) return false
+      if (type == ProtoType.STRUCT_VALUE) return true
+      if (type == ProtoType.STRUCT_NULL) return true
       return when (encodeMode!!) {
         EncodeMode.MAP,
         EncodeMode.REPEATED,
         EncodeMode.PACKED,
-        EncodeMode.THROW_IF_ABSENT -> false
+        EncodeMode.REQUIRED -> false
         EncodeMode.NULL_IF_ABSENT -> true
-        EncodeMode.IDENTITY_IF_ABSENT -> {
+        EncodeMode.OMIT_IDENTITY -> {
           when {
             isOneOf -> true
             type!!.isMessage -> true
@@ -1542,6 +1606,13 @@ class KotlinGenerator private constructor(
         ProtoType.UINT32 to INT,
         ProtoType.UINT64 to LONG,
         ProtoType.ANY to ClassName("com.squareup.wire", "AnyMessage"),
+        ProtoType.DURATION to ClassName("com.squareup.wire", "Duration"),
+        ProtoType.STRUCT_MAP to ClassName("kotlin.collections", "Map")
+            .parameterizedBy(ClassName("kotlin", "String"), STAR),
+        ProtoType.STRUCT_VALUE to ClassName("kotlin", "Any"),
+        ProtoType.STRUCT_NULL to ClassName("kotlin", "Nothing").copy(nullable = true),
+        ProtoType.STRUCT_LIST to ClassName("kotlin.collections", "List")
+            .parameterizedBy(STAR),
         FIELD_OPTIONS to ClassName("com.google.protobuf", "FieldOptions"),
         MESSAGE_OPTIONS to ClassName("com.google.protobuf", "MessageOptions"),
         ENUM_OPTIONS to ClassName("com.google.protobuf", "EnumOptions")
@@ -1559,7 +1630,7 @@ class KotlinGenerator private constructor(
       rpcCallStyle: RpcCallStyle = RpcCallStyle.SUSPENDING,
       rpcRole: RpcRole = RpcRole.CLIENT
     ): KotlinGenerator {
-      val map = mutableMapOf<ProtoType, ClassName>()
+      val map = mutableMapOf<ProtoType, TypeName>()
 
       fun putAll(kotlinPackage: String, enclosingClassName: ClassName?, types: List<Type>) {
         for (type in types) {

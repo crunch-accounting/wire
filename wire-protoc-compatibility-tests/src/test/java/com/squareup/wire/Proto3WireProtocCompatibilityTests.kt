@@ -19,7 +19,11 @@ package com.squareup.wire
 
 import com.google.protobuf.Any
 import com.google.protobuf.DescriptorProtos
+import com.google.protobuf.Duration
 import com.google.protobuf.FieldOptions
+import com.google.protobuf.ListValue
+import com.google.protobuf.Struct
+import com.google.protobuf.Value
 import com.google.protobuf.util.JsonFormat
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.JsonDataException
@@ -32,8 +36,13 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.Assert.fail
 import org.junit.Ignore
 import org.junit.Test
+import squareup.proto3.alltypes.All64
+import squareup.proto3.alltypes.All64OuterClass
 import squareup.proto3.alltypes.AllTypes
 import squareup.proto3.alltypes.AllTypesOuterClass
+import squareup.proto3.alltypes.CamelCase
+import squareup.proto3.alltypes.CamelCase.NestedCamelCase
+import squareup.proto3.alltypes.CamelCaseOuterClass
 import squareup.proto3.pizza.BuyOneGetOnePromotion
 import squareup.proto3.pizza.FreeGarlicBreadPromotion
 import squareup.proto3.pizza.Pizza
@@ -60,6 +69,10 @@ class Proto3WireProtocCompatibilityTests {
   @Test fun protocJson() {
     val pizzaDelivery = PizzaOuterClass.PizzaDelivery.newBuilder()
         .setAddress("507 Cross Street")
+        .setDeliveredWithinOrFree(Duration.newBuilder()
+            .setSeconds(1_799)
+            .setNanos(500_000_000)
+            .build())
         .addPizzas(PizzaOuterClass.Pizza.newBuilder()
             .addToppings("pineapple")
             .addToppings("onion")
@@ -78,7 +91,8 @@ class Proto3WireProtocCompatibilityTests {
         |  "promotion": {
         |    "@type": "type.googleapis.com/squareup.proto3.pizza.BuyOneGetOnePromotion",
         |    "coupon": "MAUI"
-        |  }
+        |  },
+        |  "deliveredWithinOrFree": "1799.500s"
         |}
         """.trimMargin()
 
@@ -102,11 +116,13 @@ class Proto3WireProtocCompatibilityTests {
     val pizzaDelivery = PizzaDelivery(
         address = "507 Cross Street",
         pizzas = listOf(Pizza(toppings = listOf("pineapple", "onion"))),
-        promotion = AnyMessage.pack(BuyOneGetOnePromotion(coupon = "MAUI"))
+        promotion = AnyMessage.pack(BuyOneGetOnePromotion(coupon = "MAUI")),
+        delivered_within_or_free = durationOfSeconds(1_799L, 500_000_000L)
     )
     val json = """
         |{
         |  "address": "507 Cross Street",
+        |  "deliveredWithinOrFree": "1799.500s",
         |  "pizzas": [
         |    {
         |      "toppings": [
@@ -115,6 +131,7 @@ class Proto3WireProtocCompatibilityTests {
         |      ]
         |    }
         |  ],
+        |  "loyalty": {},
         |  "promotion": {
         |    "@type": "type.googleapis.com/squareup.proto3.pizza.BuyOneGetOnePromotion",
         |    "coupon": "MAUI"
@@ -142,6 +159,7 @@ class Proto3WireProtocCompatibilityTests {
         .setPromotion(Any.pack(PizzaOuterClass.BuyOneGetOnePromotion.newBuilder()
             .setCoupon("MAUI")
             .build()))
+        .setLoyalty(Struct.newBuilder().build())
         .build()
 
     val typeRegistry = JsonFormat.TypeRegistry.newBuilder()
@@ -266,7 +284,7 @@ class Proto3WireProtocCompatibilityTests {
   @Ignore("TODO")
   @Test fun serializeDefaultAllTypesMoshi() {
     assertJsonEquals(DEFAULT_ALL_TYPES_JSON,
-        moshi.adapter(AllTypes::class.java).toJson(defaultAllTypesMoshi))
+        moshi.adapter(AllTypes::class.java).toJson(defaultAllTypesWire))
   }
 
   @Test fun deserializeDefaultAllTypesProtoc() {
@@ -286,7 +304,7 @@ class Proto3WireProtocCompatibilityTests {
   @Test fun deserializeDefaultAllTypesMoshi() {
     val allTypesAdapter: JsonAdapter<AllTypes> = moshi.adapter(AllTypes::class.java)
 
-    val allTypes = defaultAllTypesMoshi
+    val allTypes = defaultAllTypesWire
     val parsed = allTypesAdapter.fromJson(DEFAULT_ALL_TYPES_JSON)
     assertThat(parsed).isEqualTo(allTypes)
     assertThat(parsed.toString()).isEqualTo(allTypes.toString())
@@ -325,7 +343,167 @@ class Proto3WireProtocCompatibilityTests {
     val parsed = allTypesAdapter.fromJson(IDENTITY_ALL_TYPES_JSON)
     assertThat(parsed).isEqualTo(allTypes)
     assertThat(parsed.toString()).isEqualTo(allTypes.toString())
-    assertJsonEquals(allTypesAdapter.toJson(parsed), allTypesAdapter.toJson(allTypes))}
+    assertJsonEquals(allTypesAdapter.toJson(parsed), allTypesAdapter.toJson(allTypes))
+  }
+
+  @Ignore("TODO")
+  @Test fun `int64s are encoded with quotes and decoded with either`() {
+    val allTypesAdapter: JsonAdapter<AllTypes> = moshi.adapter(AllTypes::class.java)
+
+    val model = AllTypes(squareup_proto3_alltypes_sint64 = 123)
+    assertThat(allTypesAdapter.fromJson("""{"sint64":"123"}""")).isEqualTo(model)
+    assertThat(allTypesAdapter.fromJson("""{"sint64":123}""")).isEqualTo(model)
+    assertThat(allTypesAdapter.fromJson("""{"sint64":123.0}""")).isEqualTo(model)
+
+    assertThat(allTypesAdapter.toJson(model)).isEqualTo("""{"sint64":"123"}""")
+  }
+
+  @Test fun `field names are encoded with camel case and decoded with either`() {
+    val nestedAdapter: JsonAdapter<NestedCamelCase> = moshi.adapter(NestedCamelCase::class.java)
+    val camelAdapter: JsonAdapter<CamelCase> = moshi.adapter(CamelCase::class.java)
+
+    val nested = NestedCamelCase(1)
+    assertThat(nestedAdapter.fromJson("""{"oneInt32":1}""")).isEqualTo(nested)
+    assertThat(nestedAdapter.fromJson("""{"one_int32":1}""")).isEqualTo(nested)
+
+    // Unknown fields.
+    assertThat(nestedAdapter.fromJson("""{"one__int32":1}""")).isEqualTo(NestedCamelCase())
+    assertThat(nestedAdapter.fromJson("""{"oneint32":1}""")).isEqualTo(NestedCamelCase())
+    assertThat(nestedAdapter.fromJson("""{"one_int_32":1}""")).isEqualTo(NestedCamelCase())
+    assertThat(nestedAdapter.fromJson("""{"OneInt32":1}""")).isEqualTo(NestedCamelCase())
+    assertThat(nestedAdapter.fromJson("""{"One_Int32":1}""")).isEqualTo(NestedCamelCase())
+
+    // Encoding.
+    assertThat(nestedAdapter.toJson(nested)).isEqualTo("""{"oneInt32":1}""")
+
+    // More fields
+    assertThat(camelAdapter.fromJson("""{"nestedMessage":{"oneInt32":1}}""")).isEqualTo(CamelCase(nested__message = NestedCamelCase(one_int32 = 1)))
+    assertThat(camelAdapter.fromJson("""{"nested__message":{"one_int32":1}}""")).isEqualTo(CamelCase(nested__message = NestedCamelCase(one_int32 = 1)))
+    assertThat(camelAdapter.fromJson("""{"RepInt32":[1, 2]}""")).isEqualTo(CamelCase(_Rep_int32 = listOf(1, 2)))
+    assertThat(camelAdapter.fromJson("""{"_Rep_int32":[1, 2]}""")).isEqualTo(CamelCase(_Rep_int32 = listOf(1, 2)))
+    assertThat(camelAdapter.fromJson("""{"iDitItMyWAy":"frank"}""")).isEqualTo(CamelCase(IDitIt_my_wAy = "frank"))
+    assertThat(camelAdapter.fromJson("""{"IDitIt_my_wAy":"frank"}""")).isEqualTo(CamelCase(IDitIt_my_wAy = "frank"))
+    assertThat(camelAdapter.fromJson("""{"mapInt32Int32":{"1":2}}""")).isEqualTo(CamelCase(map_int32_Int32 = mapOf(1 to 2)))
+    assertThat(camelAdapter.fromJson("""{"map_int32_Int32":{"1":2}}""")).isEqualTo(CamelCase(map_int32_Int32 = mapOf(1 to 2)))
+
+    // Encoding.
+    val camel = CamelCase(
+        nested__message = NestedCamelCase(1),
+        _Rep_int32 = listOf(1, 2),
+        IDitIt_my_wAy = "frank",
+        map_int32_Int32 = mapOf(1 to 2)
+    )
+    assertThat(camelAdapter.toJson(camel)).isEqualTo(
+        """{"nestedMessage":{"oneInt32":1},"RepInt32":[1,2],"iDitItMyWAy":"frank","mapInt32Int32":{"1":2}}""")
+
+    // Confirm protoc prints the same.
+    val protocCamel = CamelCaseOuterClass.CamelCase.newBuilder()
+        .setNestedMessage(CamelCaseOuterClass.CamelCase.NestedCamelCase.newBuilder().setOneInt32(1))
+        .addAllRepInt32(listOf(1, 2))
+        .setIDitItMyWAy("frank")
+        .putMapInt32Int32(1, 2)
+    assertJsonEquals(camelAdapter.toJson(camel), JsonFormat.printer().print(protocCamel))
+  }
+
+  @Test fun all64JsonProtoc(){
+    val all64 = All64OuterClass.All64.newBuilder()
+        .setMyInt64(Long.MIN_VALUE)
+        .setMyUint64(Long.MIN_VALUE)
+        .setMySint64(Long.MIN_VALUE)
+        .setMyFixed64(Long.MIN_VALUE)
+        .setMySfixed64(Long.MIN_VALUE)
+        .addAllRepInt64(list(Long.MIN_VALUE))
+        .addAllRepUint64(list(Long.MIN_VALUE))
+        .addAllRepSint64(list(Long.MIN_VALUE))
+        .addAllRepFixed64(list(Long.MIN_VALUE))
+        .addAllRepSfixed64(list(Long.MIN_VALUE))
+        .addAllPackInt64(list(Long.MIN_VALUE))
+        .addAllPackUint64(list(Long.MIN_VALUE))
+        .addAllPackSint64(list(Long.MIN_VALUE))
+        .addAllPackFixed64(list(Long.MIN_VALUE))
+        .addAllPackSfixed64(list(Long.MIN_VALUE))
+        .setOneofInt64(Long.MIN_VALUE)
+        .putMapInt64Sfixed64(Long.MIN_VALUE, Long.MIN_VALUE)
+        .build()
+
+    val jsonPrinter = JsonFormat.printer()
+    assertJsonEquals(jsonPrinter.print(all64), ALL_64_JSON)
+
+    val jsonParser = JsonFormat.parser()
+    val parsed = All64OuterClass.All64.newBuilder()
+        .apply { jsonParser.merge(ALL_64_JSON, this) }
+        .build()
+    assertThat(parsed).isEqualTo(all64)
+  }
+
+  @Ignore("TODO")
+  @Test fun all64JsonMoshi() {
+    val all64 = All64(
+        my_int64 = Long.MIN_VALUE,
+        my_uint64 = Long.MIN_VALUE,
+        my_sint64 = Long.MIN_VALUE,
+        my_fixed64 = Long.MIN_VALUE,
+        my_sfixed64 = Long.MIN_VALUE,
+        rep_int64 = list(Long.MIN_VALUE),
+        rep_uint64 = list(Long.MIN_VALUE),
+        rep_sint64 = list(Long.MIN_VALUE),
+        rep_fixed64 = list(Long.MIN_VALUE),
+        rep_sfixed64 = list(Long.MIN_VALUE),
+        pack_int64 = list(Long.MIN_VALUE),
+        pack_uint64 = list(Long.MIN_VALUE),
+        pack_sint64 = list(Long.MIN_VALUE),
+        pack_fixed64 = list(Long.MIN_VALUE),
+        pack_sfixed64 = list(Long.MIN_VALUE),
+        oneof_int64 = Long.MIN_VALUE,
+        map_int64_sfixed64 = mapOf(Long.MIN_VALUE to Long.MIN_VALUE)
+    )
+
+    val moshi = Moshi.Builder()
+        .add(WireJsonAdapterFactory())
+        .build()
+    val jsonAdapter = moshi.adapter(All64::class.java).indent("  ")
+    assertJsonEquals(jsonAdapter.toJson(all64), ALL_64_JSON)
+    assertThat(jsonAdapter.fromJson(ALL_64_JSON)).isEqualTo(all64)
+  }
+
+  @Test fun durationProto() {
+    val googleMessage = PizzaOuterClass.PizzaDelivery.newBuilder()
+        .setDeliveredWithinOrFree(Duration.newBuilder()
+            .setSeconds(1_799)
+            .setNanos(500_000_000)
+            .build())
+        .build()
+
+    val wireMessage = PizzaDelivery(
+        delivered_within_or_free = durationOfSeconds(1_799L, 500_000_000L)
+    )
+
+    val googleMessageBytes = googleMessage.toByteArray()
+    assertThat(wireMessage.encode()).isEqualTo(googleMessageBytes)
+    assertThat(PizzaDelivery.ADAPTER.decode(googleMessageBytes)).isEqualTo(wireMessage)
+  }
+
+  @Test fun structProto() {
+    val googleMessage = PizzaOuterClass.PizzaDelivery.newBuilder()
+        .setLoyalty(Struct.newBuilder()
+            .putFields("stamps", Value.newBuilder().setNumberValue(5.0).build())
+            .putFields("members", Value.newBuilder().setListValue(
+                ListValue.newBuilder()
+                    .addValues(Value.newBuilder().setStringValue("Benoît").build())
+                    .addValues(Value.newBuilder().setStringValue("Jesse").build())
+                    .build())
+                .build())
+            .build())
+        .build()
+
+    val wireMessage = PizzaDelivery(
+        loyalty = mapOf("stamps" to 5.0, "members" to listOf("Benoît", "Jesse"))
+    )
+
+    val googleMessageBytes = googleMessage.toByteArray()
+    assertThat(wireMessage.encode()).isEqualTo(googleMessageBytes)
+    assertThat(PizzaDelivery.ADAPTER.decode(googleMessageBytes)).isEqualTo(wireMessage)
+  }
 
   companion object {
     private val moshi = Moshi.Builder()
@@ -388,9 +566,10 @@ class Proto3WireProtocCompatibilityTests {
         .putMapStringMessage("message",
             AllTypesOuterClass.AllTypes.NestedMessage.newBuilder().setA(1).build())
         .putMapStringEnum("enum", AllTypesOuterClass.AllTypes.NestedEnum.A)
+        .setOneofInt32(0)
         .build()
 
-    private val defaultAllTypesMoshi = AllTypes(
+    private val defaultAllTypesWire = AllTypes(
         squareup_proto3_alltypes_int32 = 111,
         squareup_proto3_alltypes_uint32 = 112,
         squareup_proto3_alltypes_sint32 = 113,
@@ -442,7 +621,8 @@ class Proto3WireProtocCompatibilityTests {
         map_int32_int32 = mapOf(1 to 2),
         map_string_string = mapOf("key" to "value"),
         map_string_message = mapOf("message" to AllTypes.NestedMessage(1)),
-        map_string_enum = mapOf("enum" to AllTypes.NestedEnum.A)
+        map_string_enum = mapOf("enum" to AllTypes.NestedEnum.A),
+        oneof_int32 = 0
     )
 
     private val DEFAULT_ALL_TYPES_JSON = """{
@@ -497,7 +677,31 @@ class Proto3WireProtocCompatibilityTests {
         |"mapInt32Int32":{"1":2},
         |"mapStringString":{"key":"value"},
         |"mapStringMessage":{"message":{"a":1}},
-        |"mapStringEnum":{"enum":"A"}
+        |"mapStringEnum":{"enum":"A"},
+        |"oneofInt32" : 0.0
+        |}""".trimMargin()
+
+    private val ALL_64_JSON = """
+        |{
+        |  "myInt64": "-9223372036854775808",
+        |  "myUint64": "9223372036854775808",
+        |  "mySint64": "-9223372036854775808",
+        |  "myFixed64": "9223372036854775808",
+        |  "mySfixed64": "-9223372036854775808",
+        |  "repInt64": ["-9223372036854775808", "-9223372036854775808"],
+        |  "repUint64": ["9223372036854775808", "9223372036854775808"],
+        |  "repSint64": ["-9223372036854775808", "-9223372036854775808"],
+        |  "repFixed64": ["9223372036854775808", "9223372036854775808"],
+        |  "repSfixed64": ["-9223372036854775808", "-9223372036854775808"],
+        |  "packInt64": ["-9223372036854775808", "-9223372036854775808"],
+        |  "packUint64": ["9223372036854775808", "9223372036854775808"],
+        |  "packSint64": ["-9223372036854775808", "-9223372036854775808"],
+        |  "packFixed64": ["9223372036854775808", "9223372036854775808"],
+        |  "packSfixed64": ["-9223372036854775808", "-9223372036854775808"],
+        |  "oneofInt64": "-9223372036854775808",
+        |  "mapInt64Sfixed64": {
+        |    "-9223372036854775808": "-9223372036854775808"
+        |  }
         |}""".trimMargin()
 
     private const val IDENTITY_ALL_TYPES_JSON = "{}"

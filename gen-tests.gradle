@@ -68,6 +68,7 @@ task generateNoOptionsTests(type: JavaExec) {
       'google/protobuf/descriptor.proto',
       '--excludes=google.protobuf.*',
       '--excludes=squareup.options.*',
+      '--excludes=com.squareup.wire.ModelEvaluation',
   ] + PROTOS
 }
 
@@ -189,6 +190,7 @@ task generateKotlinTests(type: JavaExec) {
       'deprecated_enum.proto',
       'edge_cases.proto',
       'external_message.proto',
+      'foreign.proto',
       'form.proto',
       'google/protobuf/any.proto',
       'google/protobuf/descriptor.proto',
@@ -218,6 +220,8 @@ task generateProto3KotlinTests(type: JavaExec) {
   args = [
           '--proto_path=wire-library/wire-tests/src/commonTest/proto3/kotlin',
           '--kotlin_out=wire-library/wire-tests/src/commonTest/proto-kotlin',
+          '--proto3-preview=UNSUPPORTED',
+          'all_types.proto',
           'person.proto',
   ]
 }
@@ -265,6 +269,8 @@ task generateKotlinJavaInteropTests(type: JavaExec) {
       '--java_interop',
       'all_types.proto',
       'deprecated.proto',
+      'external_message.proto',
+      'foreign.proto',
       'google/protobuf/any.proto',
       'google/protobuf/descriptor.proto',
       'map.proto',
@@ -273,6 +279,7 @@ task generateKotlinJavaInteropTests(type: JavaExec) {
       'packed_encoding.proto',
       'percents_in_kdoc.proto',
       'person.proto',
+      'resursive_map.proto',
       'redacted_one_of.proto',
       'repeated.proto',
       'same_name_enum.proto',
@@ -334,6 +341,7 @@ task generateMoshiAdapterJavaTests(type: JavaExec) {
           'collection_types.proto',
           'person_java.proto',
           'dinosaur_java.proto',
+          'period_java.proto',
           'keyword_java.proto',
   ]
 }
@@ -349,6 +357,7 @@ task generateMoshiAdapterInteropKotlinTests(type: JavaExec) {
           '--java_interop',
           'person_java_interop_kotlin.proto',
           'dinosaur_java_interop_kotlin.proto',
+          'period_java_interop_kotlin.proto',
           'keyword_kotlin.proto',
   ]
 }
@@ -363,6 +372,7 @@ task generateMoshiAdapterKotlinTests(type: JavaExec) {
           '--kotlin_out=wire-library/wire-moshi-adapter/src/test/java',
           'person_kotlin.proto',
           'dinosaur_kotlin.proto',
+          'period_kotlin.proto',
   ]
 }
 
@@ -375,4 +385,21 @@ task generateTests(dependsOn: [generateJavaTests, generateCompactTests, generate
     generateProto3KotlinTests]) {
   group = 'Generate Tests'
   description = 'Generates all test classes'
+}
+
+// TODO `wire-gson-support` mixes written and generated code. Needs to split them to add it here.
+task cleanGeneratedTests(type: Delete) {
+  group = 'Generate Tests'
+  description = 'Delete all generated tests'
+  delete 'wire-grpc-tests/src/test/proto-grpc',
+         'wire-library/wire-moshi-adapter/src/test/java/com/squareup/wire/protos',
+         'wire-library/wire-tests/src/commonTest/proto-kotlin',
+         'wire-library/wire-tests/src/jvmJavaAndroidCompactTest/proto-java',
+         'wire-library/wire-tests/src/jvmJavaAndroidTest/proto-java',
+         'wire-library/wire-tests/src/jvmJavaCompactTest/proto-java',
+         'wire-library/wire-tests/src/jvmJavaNoOptionsTest/proto-java',
+         'wire-library/wire-tests/src/jvmJavaPrunedTest/proto-java',
+         'wire-library/wire-tests/src/jvmJavaTest/proto-java',
+         'wire-library/wire-tests/src/jvmKotlinAndroidTest/proto-kotlin',
+         'wire-library/wire-tests/src/jvmKotlinInteropTest/proto-kotlin'
 }

@@ -15,6 +15,7 @@
  */
 package com.squareup.wire.schema
 
+import com.squareup.wire.internal.camelCase
 import com.squareup.wire.schema.ProtoFile.Syntax
 import com.squareup.wire.schema.ProtoFile.Syntax.PROTO_2
 import com.squareup.wire.schema.ProtoFile.Syntax.PROTO_3
@@ -28,8 +29,11 @@ interface SyntaxRules {
   fun getEncodeMode(
     protoType: ProtoType,
     label: Field.Label?,
-    isPacked: Boolean
+    isPacked: Boolean,
+    isOneOf: Boolean
   ): Field.EncodeMode
+
+  fun jsonName(name: String): String
 
   companion object {
     fun get(syntax: Syntax?): SyntaxRules {
@@ -52,18 +56,21 @@ interface SyntaxRules {
       override fun getEncodeMode(
         protoType: ProtoType,
         label: Field.Label?,
-        isPacked: Boolean
+        isPacked: Boolean,
+        isOneOf: Boolean
       ): Field.EncodeMode {
         return when (label) {
           Field.Label.REPEATED ->
             if (isPacked) Field.EncodeMode.PACKED
             else Field.EncodeMode.REPEATED
           Field.Label.OPTIONAL -> Field.EncodeMode.NULL_IF_ABSENT
-          Field.Label.REQUIRED -> Field.EncodeMode.THROW_IF_ABSENT
+          Field.Label.REQUIRED -> Field.EncodeMode.REQUIRED
           Field.Label.ONE_OF,
           null -> if (protoType.isMap) Field.EncodeMode.MAP else Field.EncodeMode.NULL_IF_ABSENT
         }
       }
+
+      override fun jsonName(name: String): String = name
     }
 
     internal val PROTO_3_SYNTAX_RULES = object : SyntaxRules {
@@ -83,7 +90,8 @@ interface SyntaxRules {
       override fun getEncodeMode(
         protoType: ProtoType,
         label: Field.Label?,
-        isPacked: Boolean
+        isPacked: Boolean,
+        isOneOf: Boolean
       ): Field.EncodeMode {
         if (label == Field.Label.REPEATED) {
           return if (isPacked) {
@@ -93,9 +101,12 @@ interface SyntaxRules {
           }
         }
         if (protoType.isMap) return Field.EncodeMode.MAP
+        if (isOneOf) return Field.EncodeMode.NULL_IF_ABSENT
 
-        return Field.EncodeMode.IDENTITY_IF_ABSENT
+        return Field.EncodeMode.OMIT_IDENTITY
       }
+
+      override fun jsonName(name: String): String = camelCase(name)
     }
   }
 }

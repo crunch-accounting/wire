@@ -26,9 +26,8 @@ class Field private constructor(
 
   val location: Location,
 
-  // TODO(oldergod) Make private, we wanna expose encodeMode instead.
-  /** May be null for proto3 fields, or one-of's. */
-  val label: Label?,
+  /** May be null for proto3 fields, one-of's, or maps. */
+  private val label: Label?,
 
   val name: String,
 
@@ -60,13 +59,8 @@ class Field private constructor(
   val isRepeated: Boolean
     get() = label == Label.REPEATED
 
-  @Deprecated("Proto2 concept inexistent in proto3. Use EncodeMode instead.")
-  val isOptional: Boolean
-    get() = label == Label.OPTIONAL
-
-  @Deprecated("Proto2 concept inexistent in proto3. Use EncodeMode instead.")
   val isRequired: Boolean
-    get() = encodeMode == EncodeMode.THROW_IF_ABSENT
+    get() = encodeMode == EncodeMode.REQUIRED
 
   // Null until this field is linked.
   var encodeMode: EncodeMode? = null
@@ -90,6 +84,10 @@ class Field private constructor(
   val isPacked: Boolean
     get() = encodeMode == EncodeMode.PACKED
 
+  // Null until this field is linked.
+  var jsonName: String? = null
+    private set
+
   private fun isPackable(linker: Linker, type: ProtoType): Boolean {
     return type != ProtoType.STRING &&
         type != ProtoType.BYTES &&
@@ -109,7 +107,9 @@ class Field private constructor(
     // We allow any package name to be used as long as it ends with '.redacted'.
     isRedacted = options.optionMatches(".*\\.redacted", "true")
 
-    encodeMode = syntaxRules.getEncodeMode(type!!, label, isPacked = packed == "true")
+    encodeMode =
+        syntaxRules.getEncodeMode(type!!, label, isPacked = packed == "true", isOneOf = isOneOf)
+    jsonName = syntaxRules.jsonName(name)
   }
 
   fun validate(linker: Linker, syntaxRules: SyntaxRules) {
@@ -166,6 +166,7 @@ class Field private constructor(
     result.deprecated = deprecated
     result.encodeMode = encodeMode
     result.isRedacted = isRedacted
+    result.jsonName = jsonName
     return result
   }
 
@@ -228,10 +229,10 @@ class Field private constructor(
     NULL_IF_ABSENT,
 
     /** Required from proto2. */
-    THROW_IF_ABSENT,
+    REQUIRED,
 
     /** Non-repeated fields in proto3. Identify can be `0`, `false`, `""`, or `null`. */
-    IDENTITY_IF_ABSENT,
+    OMIT_IDENTITY,
 
     /** List. */
     REPEATED,

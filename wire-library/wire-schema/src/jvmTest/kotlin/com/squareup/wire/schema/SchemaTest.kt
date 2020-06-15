@@ -1839,4 +1839,66 @@ class SchemaTest {
     assertThat(schema.getService("Service")!!.options().elements).contains(deprecatedOptionElement)
     assertThat(schema.getService("Service")!!.rpc("Call")!!.options.elements).contains(deprecatedOptionElement)
   }
+
+  @Test
+  fun forbidConflictingCamelCasedNamesInProto3() {
+    try {
+      RepoBuilder()
+          .add("dinosaur.proto", """
+              |syntax = "proto3";
+              |
+              |message Dinosaur {
+              |  string myName = 1;
+              |  string my_name = 2;
+              |}
+              |""".trimMargin()
+          ).schema()
+      fail()
+    } catch (expected: SchemaException) {
+      assertThat(expected).hasMessage("""
+            |multiple fields share same JSON camel-case name 'myName':
+            |  1. myName (/source/dinosaur.proto:4:3)
+            |  2. my_name (/source/dinosaur.proto:5:3)
+            |  for message Dinosaur (/source/dinosaur.proto:3:1)
+            """.trimMargin()
+      )
+    }
+  }
+
+  @Test
+  fun allowConflictingCamelCasedNamesInProto2() {
+    val schema = RepoBuilder()
+        .add("dinosaur.proto", """
+              |syntax = "proto2";
+              |
+              |message Dinosaur {
+              |  optional string myName = 1;
+              |  optional string my_name = 2;
+              |}
+              |""".trimMargin()
+        ).schema()
+    assertThat(schema.getType("Dinosaur")).isNotNull()
+  }
+
+  @Test
+  fun nestedOptionSetting() {
+    val schema = RepoBuilder()
+        .add("dinosaur.proto", """
+              |package wire;
+              |import 'google/protobuf/descriptor.proto';
+              |extend google.protobuf.FieldOptions {
+              |  optional Foo my_field_option = 60004;
+              |}
+              |message Foo {
+              |  optional double a = 1 [(wire.my_field_option).baz.value = "b"];
+              |  optional Nested baz = 2;
+              |}
+              |message Nested {
+              |  optional string value = 1;
+              |}
+              |""".trimMargin()
+        )
+        .schema()
+    assertThat(schema.getType("wire.Foo")).isNotNull()
+  }
 }

@@ -131,6 +131,7 @@ public final class JavaGenerator {
           .put(ProtoType.UINT32, (ClassName) TypeName.INT.box())
           .put(ProtoType.UINT64, (ClassName) TypeName.LONG.box())
           .put(ProtoType.ANY, ClassName.get("com.squareup.wire", "AnyMessage"))
+          .put(ProtoType.DURATION, ClassName.get("com.squareup.wire", "Duration"))
           .put(FIELD_OPTIONS, ClassName.get("com.google.protobuf", "FieldOptions"))
           .put(ENUM_OPTIONS, ClassName.get("com.google.protobuf", "EnumOptions"))
           .put(MESSAGE_OPTIONS, ClassName.get("com.google.protobuf", "MessageOptions"))
@@ -284,7 +285,7 @@ public final class JavaGenerator {
 
   private CodeBlock singleAdapterFor(Field field, NameAllocator nameAllocator) {
     return field.getType().isMap()
-        ? CodeBlock.of("$N", nameAllocator.get(field))
+        ? CodeBlock.of("$NAdapter()", nameAllocator.get(field))
         : singleAdapterFor(field.getType());
   }
 
@@ -572,7 +573,7 @@ public final class JavaGenerator {
       if (field.isDeprecated()) {
         fieldBuilder.addAnnotation(Deprecated.class);
       }
-      if (emitAndroidAnnotations && field.isOptional()) {
+      if (emitAndroidAnnotations && field.getEncodeMode() == Field.EncodeMode.NULL_IF_ABSENT) {
         fieldBuilder.addAnnotation(NULLABLE);
       }
       builder.addField(fieldBuilder.build());
@@ -868,11 +869,10 @@ public final class JavaGenerator {
       if (field.getType().isMap()) {
         TypeName adapterType = adapterOf(fieldType(field));
         String fieldName = nameAllocator.get(field);
-        adapter.addField(FieldSpec.builder(adapterType, fieldName, PRIVATE, FINAL)
-            .initializer("$T.newMapAdapter($L, $L)", ADAPTER,
-                singleAdapterFor(field.getType().getKeyType()),
-                singleAdapterFor(field.getType().getValueType()))
-            .build());
+        adapter.addField(FieldSpec.builder(adapterType, fieldName, PRIVATE).build());
+        // Map adapters have to be lazy in order to avoid a circular reference when its value type
+        // is the same as its enclosing type.
+        adapter.addMethod(mapAdapter(nameAllocator, adapterType, fieldName, field.getType()));
       }
     }
 
@@ -1151,12 +1151,28 @@ public final class JavaGenerator {
       result.addMember("adapter", "$S", adapterString(field.getType()));
     }
 
-    if (!field.isOptional()) {
-      if (field.isPacked()) {
-        result.addMember("label", "$T.PACKED", WireField.Label.class);
-      } else if (field.getLabel() != null) {
-        result.addMember("label", "$T.$L", WireField.Label.class, field.getLabel());
-      }
+    WireField.Label wireFieldLabel;
+    //noinspection ConstantConditions
+    switch (field.getEncodeMode()) {
+      case REQUIRED:
+        wireFieldLabel = WireField.Label.REQUIRED;
+        break;
+      case OMIT_IDENTITY:
+        wireFieldLabel = WireField.Label.OMIT_IDENTITY;
+        break;
+      case REPEATED:
+        wireFieldLabel = WireField.Label.REPEATED;
+        break;
+      case PACKED:
+        wireFieldLabel = WireField.Label.PACKED;
+        break;
+      case MAP:
+      case NULL_IF_ABSENT:
+      default:
+        wireFieldLabel = null;
+    }
+    if (wireFieldLabel != null) {
+      result.addMember("label", "$T.$L", WireField.Label.class, wireFieldLabel);
     }
 
     if (field.isRedacted()) {
@@ -1166,6 +1182,10 @@ public final class JavaGenerator {
     String generatedName = localNameAllocator.get(field);
     if (!generatedName.equals(field.getName())) {
       result.addMember("declaredName", "$S", field.getName());
+    }
+
+    if (!field.getJsonName().equals(field.getName())) {
+      result.addMember("jsonName", "$S", field.getJsonName());
     }
 
     return result.build();
@@ -1204,7 +1224,7 @@ public final class JavaGenerator {
       TypeName javaType = fieldType(field);
       String fieldName = nameAllocator.get(field);
       ParameterSpec.Builder param = ParameterSpec.builder(javaType, fieldName);
-      if (emitAndroidAnnotations && field.isOptional()) {
+      if (emitAndroidAnnotations && field.getEncodeMode() == Field.EncodeMode.NULL_IF_ABSENT) {
         param.addAnnotation(NULLABLE);
       }
       result.addParameter(param.build());
@@ -1273,7 +1293,7 @@ public final class JavaGenerator {
 
       if (constructorTakesAllFields) {
         ParameterSpec.Builder param = ParameterSpec.builder(javaType, fieldName);
-        if (emitAndroidAnnotations && field.isOptional()) {
+        if (emitAndroidAnnotations && field.getEncodeMode() == Field.EncodeMode.NULL_IF_ABSENT) {
           param.addAnnotation(NULLABLE);
         }
         result.addParameter(param.build());
@@ -1382,6 +1402,36 @@ public final class JavaGenerator {
       }
     }
     result.addStatement("super.hashCode = $N", resultName);
+    result.endControlFlow();
+    result.addStatement("return $N", resultName);
+    return result.build();
+  }
+
+  // Example:
+  //
+  // private ProtoAdapter<Map<String, ModelEvaluation>> modelsAdapter() {
+  //   ProtoAdapter<Map<String, ModelEvaluation>> result = models;
+  //   if (result == null) {
+  //     result = ProtoAdapter.newMapAdapter(ProtoAdapter.STRING, ModelEvaluation.ADAPTER);
+  //     models = result;
+  //   }
+  //   return result;
+  // }
+  //
+  private MethodSpec mapAdapter(NameAllocator nameAllocator, TypeName adapterType, String fieldName,
+      ProtoType mapType) {
+    NameAllocator localNameAllocator = nameAllocator.clone();
+
+    String resultName = localNameAllocator.newName("result");
+    MethodSpec.Builder result = MethodSpec.methodBuilder(fieldName + "Adapter")
+        .addModifiers(PRIVATE)
+        .returns(adapterType);
+
+    result.addStatement("$T $N = $N", adapterType, resultName, fieldName);
+    result.beginControlFlow("if ($N == null)", resultName);
+    result.addStatement("$N = $T.newMapAdapter($L, $L)", resultName, ADAPTER,
+        singleAdapterFor(mapType.getKeyType()), singleAdapterFor(mapType.getValueType()));
+    result.addStatement("$N = $N", fieldName, resultName);
     result.endControlFlow();
     result.addStatement("return $N", resultName);
     return result.build();
