@@ -5,8 +5,6 @@ import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.TypeSpec;
 import com.squareup.wire.java.JavaGenerator;
-import com.squareup.wire.java.Profile;
-import com.squareup.wire.java.ProfileLoader;
 import com.squareup.wire.schema.PruningRules;
 import com.squareup.wire.schema.Location;
 import com.squareup.wire.schema.ProtoFile;
@@ -15,9 +13,12 @@ import com.squareup.wire.schema.SchemaLoader;
 import com.squareup.wire.schema.Type;
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.FileSystems;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
+
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -37,12 +38,6 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
 
   @Parameter(property = "wire.protoPaths")
   private String[] protoPaths;
-
-  @Parameter(property = "wire.android")
-  private boolean emitAndroid;
-
-  @Parameter(property = "wire.compact")
-  private boolean emitCompact;
 
   @Parameter(property = "wire.includes")
   private String[] includes;
@@ -77,18 +72,15 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
               ? Arrays.asList(protoPaths)
               : Collections.singletonList(protoSourceDirectory);
       List<String> protoFilesList = Arrays.asList(protoFiles);
+
       Schema schema = loadSchema(directories, protoFilesList);
-      Profile profile = loadProfile(schema);
 
       PruningRules identifierSet = pruningRules();
       if (!identifierSet.isEmpty()) {
         schema = retainRoots(identifierSet, schema);
       }
 
-      JavaGenerator javaGenerator = JavaGenerator.get(schema)
-              .withAndroid(emitAndroid)
-              .withCompact(emitCompact)
-              .withProfile(profile);
+      JavaGenerator javaGenerator = JavaGenerator.get(schema);
 
       for (ProtoFile protoFile : schema.getProtoFiles()) {
         if (!protoFilesList.isEmpty() && !protoFilesList.contains(protoFile.getLocation().getPath())) {
@@ -154,26 +146,17 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
   private Schema loadSchema(List<String> directories, List<String> protos) throws IOException {
     Stopwatch stopwatch = Stopwatch.createStarted();
 
-    SchemaLoader schemaLoader = new SchemaLoader();
-    for (String directory : directories) {
-      schemaLoader.addSource(new File(directory));
-    }
-    for (String proto : protos) {
-      schemaLoader.addProto(proto);
-    }
-    Schema schema = schemaLoader.load();
+    SchemaLoader schemaLoader = new SchemaLoader(FileSystems.getDefault());
+
+    schemaLoader.initRoots( directories.stream().map(Location::get).collect(Collectors.toList()),
+            protos.stream().map(Location::get).collect(Collectors.toList()) );
+
+    Schema schema = schemaLoader.loadSchema();
 
     getLog().info(String.format("Loaded %s proto files in %s",
             schema.getProtoFiles().size(), stopwatch));
 
     return schema;
-  }
-
-  private Profile loadProfile(Schema schema) throws IOException {
-    String profileName = emitAndroid ? "android" : "java";
-    return  new ProfileLoader(profileName)
-            .schema(schema)
-            .load();
   }
 
   private void writeJavaFile(ClassName javaTypeName, TypeSpec typeSpec, Location location)

@@ -9,7 +9,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <wire-java-generator.version>3.2.2</wire-java-generator.version>
+        <wire-java-generator.version>3.6.1</wire-java-generator.version>
     </properties>
 
     <dependencies>
@@ -27,6 +27,11 @@
             <groupId>org.apache.maven.plugin-tools</groupId>
             <artifactId>maven-plugin-annotations</artifactId>
             <version>3.2</version>
+        </dependency>
+        <dependency>
+            <groupId>com.squareup.wire</groupId>
+            <artifactId>wire-compiler</artifactId>
+            <version>${wire-java-generator.version}</version>
         </dependency>
         <dependency>
             <groupId>com.squareup.wire</groupId>
@@ -71,12 +76,12 @@
         <repository>
             <id>nexus</id>
             <name>Crunch releases</name>
-            <url>http://nexus.crunch.dev.local/content/repositories/releases/</url>
+            <url>http://nexus-plat.crunch.co.uk/content/repositories/releases/</url>
         </repository>
         <snapshotRepository>
             <id>nexus</id>
             <name>Internal Snapshots</name>
-            <url>http://nexus.crunch.dev.local/content/repositories/snapshots/</url>
+            <url>http://nexus-plat.crunch.co.uk/content/repositories/snapshots/</url>
         </snapshotRepository>
     </distributionManagement>
 </project>
