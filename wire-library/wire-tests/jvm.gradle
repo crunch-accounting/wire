@@ -45,6 +45,22 @@ kotlin.targets.matching { it.platformType.name == 'jvm' }.all { target ->
     }
     jvmTest.dependsOn jvmJavaAndroidCompactTest
 
+    jsonJavaTest.java.srcDirs += 'src/jvmJsonTest/kotlin'
+    jsonJavaTest.java.srcDirs += 'src/jvmJsonJavaTest/proto-java'
+    tasks.create('jvmJsonJavaTest', Test) {
+      classpath = sourceSets.jsonJavaTest.runtimeClasspath
+      testClassesDirs = sourceSets.jsonJavaTest.output.classesDirs
+    }
+    jvmTest.dependsOn jvmJsonJavaTest
+
+    jsonKotlinTest.java.srcDirs += 'src/jvmJsonTest/kotlin'
+    jsonKotlinTest.java.srcDirs += 'src/jvmJsonKotlinTest/proto-kotlin'
+    tasks.create('jvmJsonKotlinTest', Test) {
+      classpath = sourceSets.jsonKotlinTest.runtimeClasspath
+      testClassesDirs = sourceSets.jsonKotlinTest.output.classesDirs
+    }
+    jvmTest.dependsOn jvmJsonKotlinTest
+
     dependencies {
       javaTestImplementation project(':wire-runtime')
       javaNoOptionsTestImplementation project(':wire-runtime')
@@ -52,6 +68,8 @@ kotlin.targets.matching { it.platformType.name == 'jvm' }.all { target ->
       javaPrunedTestImplementation project(':wire-runtime')
       javaAndroidTestImplementation project(':wire-runtime')
       javaAndroidCompactTestImplementation project(':wire-runtime')
+      jsonJavaTestImplementation project(':wire-runtime')
+      jsonKotlinTestImplementation project(':wire-runtime')
 
       javaAndroidTestCompileOnly deps.android
       javaAndroidCompactTestCompileOnly deps.android
@@ -61,6 +79,23 @@ kotlin.targets.matching { it.platformType.name == 'jvm' }.all { target ->
       javaTestImplementation deps.kotlin.test.junit
       javaTestImplementation deps.assertj
       javaTestImplementation deps.jimfs
+      jsonJavaTestImplementation project(':wire-moshi-adapter')
+      jsonJavaTestImplementation project(':wire-gson-support')
+      jsonJavaTestImplementation project(':wire-test-utils')
+      jsonJavaTestImplementation deps.kotlin.test.junit
+      jsonJavaTestImplementation deps.assertj
+      jsonJavaTestImplementation deps.jimfs
+      jsonKotlinTestImplementation project(':wire-moshi-adapter')
+      jsonKotlinTestImplementation project(':wire-gson-support')
+      jsonKotlinTestImplementation project(':wire-test-utils')
+      jsonKotlinTestImplementation deps.kotlin.test.junit
+      jsonKotlinTestImplementation deps.assertj
+      jsonKotlinTestImplementation deps.jimfs
+
+      jvmJavaTestImplementation project(':wire-moshi-adapter')
+      jvmJavaTestImplementation deps.kotlin.reflect
+      jvmJavaTestImplementation deps.moshi
+      jvmJavaTestImplementation deps.moshiKotlin
     }
   }
 

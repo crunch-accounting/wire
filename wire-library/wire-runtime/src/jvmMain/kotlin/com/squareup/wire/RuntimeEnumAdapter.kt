@@ -15,14 +15,19 @@
  */
 package com.squareup.wire
 
+import com.squareup.wire.internal.identityOrNull
 import java.lang.reflect.Method
 
 /**
  * Converts values of an enum to and from integers using reflection.
  */
-internal class RuntimeEnumAdapter<E : WireEnum>(
-  private val javaType: Class<E>
-) : EnumAdapter<E>(javaType.kotlin) {
+class RuntimeEnumAdapter<E : WireEnum> internal constructor(
+  private val javaType: Class<E>,
+  syntax: Syntax
+) : EnumAdapter<E>(javaType.kotlin, syntax, javaType.identityOrNull) {
+  // Obsolete; for Java classes generated before syntax were added.
+  constructor(javaType: Class<E>) : this(javaType, Syntax.PROTO_2)
+
   private var fromValueMethod: Method? = null // Lazy to avoid reflection during class loading.
 
   private fun getFromValueMethod(): Method {
@@ -36,4 +41,13 @@ internal class RuntimeEnumAdapter<E : WireEnum>(
   override fun equals(other: Any?) = other is RuntimeEnumAdapter<*> && other.type == type
 
   override fun hashCode() = type.hashCode()
+
+  companion object {
+    @JvmStatic fun <E : WireEnum> create(
+      enumType: Class<E>
+    ): RuntimeEnumAdapter<E> {
+      val defaultAdapter = get(enumType as Class<*>)
+      return RuntimeEnumAdapter(enumType, defaultAdapter.syntax)
+    }
+  }
 }

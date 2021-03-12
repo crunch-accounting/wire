@@ -1,0 +1,58 @@
+/*
+ * Copyright 2020 Square Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+syntax = "proto3";
+
+package squareup.proto3.java.interop;
+
+import "google/protobuf/duration.proto";
+
+message InteropDuration {
+  google.protobuf.Duration value = 1;
+}
+
+message InteropUint64 {
+  uint64 value = 1;
+}
+
+message InteropCamelCase {
+  string hello_world = 1;
+  string a__b = 2;
+  string _Ccc_ddd = 3;
+  string EEee_ff_gGg = 4;
+  string a_b_c = 5;
+  string GHI = 6;
+  string K_L_M = 7;
+  string __T__U__V__ = 8;
+  string _x_y_z_ = 9;
+}
+
+message InteropJsonName {
+  string a = 1 [json_name = "one"];
+  string public = 2 [json_name = "two"];
+  string camel_case = 3 [json_name = "three"];
+}
+
+message InteropBoxOneOf {
+  oneof option {
+    string a = 1;
+    int32 b = 2;
+    bool c = 3;
+    int64 d = 4;
+    bytes e = 5;
+    sint32 f = 6;
+  }
+}
+

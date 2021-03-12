@@ -12,8 +12,6 @@ wire {
     srcDir "$rootDir/wire-grpc-sample/protos/src/main/proto"
   }
   kotlin {
-    out "src/main/java"
-    includes = ['com.squareup.wire.whiteboard.Whiteboard']
     rpcCallStyle = 'blocking'
     rpcRole = 'server'
     singleMethodServices = true
@@ -22,7 +20,6 @@ wire {
 
 dependencies {
   implementation project(path: ':wire-grpc-sample:protos', configuration: 'default')
-  implementation deps.kotlin.stdlib.jdk8
   implementation deps.wire.runtime
   implementation deps.misk
 }

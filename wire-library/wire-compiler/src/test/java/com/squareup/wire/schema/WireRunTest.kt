@@ -20,6 +20,7 @@ import com.google.common.jimfs.Jimfs
 import com.squareup.wire.StringWireLogger
 import com.squareup.wire.kotlin.RpcCallStyle
 import com.squareup.wire.kotlin.RpcRole
+import com.squareup.wire.schema.WireRun.Module
 import com.squareup.wire.testing.add
 import com.squareup.wire.testing.find
 import com.squareup.wire.testing.get
@@ -161,10 +162,12 @@ class WireRunTest {
     assertThat(fs.get("generated/kt/squareup/routes/RouteGetUpdatedRedClient.kt"))
         .contains("interface RouteGetUpdatedRedClient : Service")
     assertThat(fs.get("generated/kt/squareup/routes/GrpcRouteGetUpdatedBlueClient.kt"))
-        .contains("class GrpcRouteGetUpdatedBlueClient(\n  private val client: GrpcClient\n) : RouteGetUpdatedBlueClient")
+        .contains(
+            "class GrpcRouteGetUpdatedBlueClient(\n  private val client: GrpcClient\n) : RouteGetUpdatedBlueClient")
         .doesNotContain("RouteGetUpdatedRedClient")
     assertThat(fs.get("generated/kt/squareup/routes/GrpcRouteGetUpdatedRedClient.kt"))
-        .contains("class GrpcRouteGetUpdatedRedClient(\n  private val client: GrpcClient\n) : RouteGetUpdatedRedClient")
+        .contains(
+            "class GrpcRouteGetUpdatedRedClient(\n  private val client: GrpcClient\n) : RouteGetUpdatedRedClient")
         .doesNotContain("RouteGetUpdatedBlueClient")
   }
 
@@ -415,7 +418,7 @@ class WireRunTest {
   }
 
   @Test
-  fun proto3Skipped() {
+  fun proto3ReadAlways() {
     writeBlueProto()
     fs.add("colors/src/main/proto/squareup/colors/red.proto", """
           |syntax = "proto3";
@@ -430,30 +433,6 @@ class WireRunTest {
         sourcePath = listOf(Location.get("colors/src/main/proto")),
         protoPath = listOf(Location.get("polygons/src/main/proto")),
         targets = listOf(KotlinTarget(outDirectory = "generated/kt"))
-    )
-    wireRun.execute(fs, logger)
-
-    assertThat(fs.find("generated")).containsExactlyInAnyOrder(
-        "generated/kt/squareup/colors/Blue.kt")
-  }
-
-  @Test
-  fun proto3ReadIfPreviewIsTurnedOn() {
-    writeBlueProto()
-    fs.add("colors/src/main/proto/squareup/colors/red.proto", """
-          |syntax = "proto3";
-          |package squareup.colors;
-          |message Red {
-          |  string oval = 1;
-          |}
-          """.trimMargin())
-    writeTriangleProto()
-
-    val wireRun = WireRun(
-        sourcePath = listOf(Location.get("colors/src/main/proto")),
-        protoPath = listOf(Location.get("polygons/src/main/proto")),
-        targets = listOf(KotlinTarget(outDirectory = "generated/kt")),
-        proto3Preview = true
     )
     wireRun.execute(fs, logger)
 
@@ -485,6 +464,28 @@ class WireRunTest {
     )
     wireRun.execute(fs, logger)
 
+    assertThat(fs.find("generated")).containsExactly(
+        "generated/java/squareup/colors/Blue.java")
+    assertThat(fs.get("generated/java/squareup/colors/Blue.java"))
+        .contains("public final class Blue extends Message")
+  }
+
+  @Test
+  fun optionsOnlyValidatedForPathFiles() {
+    writeBlueProto()
+    fs.add("polygons/src/main/proto/squareup/polygons/triangle.proto", """
+          |syntax = "proto2";
+          |package squareup.polygons;
+          |option (unicorn) = true; // No such option!
+          |message Triangle {
+          |}
+          """.trimMargin())
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("colors/src/main/proto")),
+        protoPath = listOf(Location.get("polygons/src/main/proto")),
+        targets = listOf(JavaTarget(outDirectory = "generated/java"))
+    )
+    wireRun.execute(fs, logger)
     assertThat(fs.find("generated")).containsExactly(
         "generated/java/squareup/colors/Blue.java")
     assertThat(fs.get("generated/java/squareup/colors/Blue.java"))
@@ -627,6 +628,79 @@ class WireRunTest {
         .contains("class Orange")
   }
 
+  @Test
+  fun partitionAcrossFiles() {
+    fs.add("protos/one.proto", """
+      |syntax = "proto2";
+      |message A {}
+      |message B {}
+      |""".trimMargin())
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("protos")),
+        targets = listOf(JavaTarget(outDirectory = "gen")),
+        modules = mapOf(
+            "a" to Module(pruningRules = PruningRules.Builder()
+                .prune("B")
+                .build()),
+            "b" to Module(dependencies = setOf("a"))
+        )
+    )
+    wireRun.execute(fs, logger)
+
+    assertThat(fs.find("gen/a")).containsExactly("gen/a/A.java")
+    assertThat(fs.find("gen/b")).containsExactly("gen/b/B.java")
+  }
+
+  @Test
+  fun partitionWithOptionsIsNotLinkedTwice() {
+    // This test exercises a bug where stub replacement would cause options to get linked twice
+    // which would then fail as a duplicate.
+
+    fs.add("protos/one.proto", """
+      |syntax = "proto2";
+      |package example;
+      |
+      |import 'google/protobuf/descriptor.proto';
+      |
+      |extend google.protobuf.MessageOptions {
+      |  optional string type = 12000 [(maps_to) = 'test'];
+      |}
+      |extend google.protobuf.FieldOptions {
+      |  optional string maps_to = 123301;
+      |}
+      |
+      |message A {
+      |}
+      |message B {
+      |}
+      |""".trimMargin())
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("protos")),
+        targets = listOf(JavaTarget(outDirectory = "gen")),
+        modules = mapOf(
+            "a" to Module(
+                pruningRules = PruningRules.Builder()
+                    .prune("example.B")
+                    .build()
+            ),
+            "b" to Module(
+                dependencies = setOf("a")
+            )
+        )
+    )
+    wireRun.execute(fs, logger)
+
+    // TODO(jwilson): fix modules to treat extension fields as first-class objects.
+    assertThat(fs.find("gen/a")).containsExactly(
+        "gen/a/example/A.java",
+        "gen/a/example/MapsToOption.java",
+        "gen/a/example/TypeOption.java")
+    assertThat(fs.find("gen/b")).containsExactly(
+        "gen/b/example/B.java",
+        "gen/b/example/MapsToOption.java",
+        "gen/b/example/TypeOption.java")
+  }
+
   @Test fun crashWhenTypeGenerationConflicts() {
     fs.add("protos/one/au.proto", """
           |package one;
@@ -686,6 +760,216 @@ class WireRunTest {
       assertThat(expected).hasMessage("Same file is getting generated by different services:\n" +
           "  Route at routes/src/main/proto/squareup/routes1/route.proto:5:1\n" +
           "  Route at routes/src/main/proto/squareup/routes2/route.proto:5:1")
+    }
+  }
+
+  @Test fun crashOnDependencyCycle() {
+    try {
+      WireRun(
+          sourcePath = emptyList(),
+          targets = emptyList(),
+          modules = mapOf(
+              "one" to Module(dependencies = setOf("two")),
+              "two" to Module(dependencies = setOf("three")),
+              "three" to Module(dependencies = setOf("one"))
+          )
+      )
+      fail()
+    } catch (e: IllegalArgumentException) {
+      assertThat(e).hasMessage("""
+        |ERROR: Modules contain dependency cycle(s):
+        | - [one, two, three]
+        |""".trimMargin())
+    }
+  }
+
+  @Test fun crashOnPackageCycle() {
+    fs.add("source-path/people/employee.proto", """
+        |syntax = "proto2";
+        |import "locations/office.proto";
+        |import "locations/residence.proto";
+        |package people;
+        |message Employee {
+        |  optional locations.Office office = 1;
+        |  optional locations.Residence residence = 2;
+        |}
+        """.trimMargin())
+    fs.add("source-path/locations/office.proto", """
+        |syntax = "proto2";
+        |import "people/office_manager.proto";
+        |package locations;
+        |message Office {
+        |  optional people.OfficeManager office_manager = 1;
+        |}
+        """.trimMargin())
+    fs.add("source-path/locations/residence.proto", """
+        |syntax = "proto2";
+        |package locations;
+        |message Residence {
+        |}
+        """.trimMargin())
+    fs.add("source-path/people/office_manager.proto", """
+        |syntax = "proto2";
+        |package people;
+        |message OfficeManager {
+        |}
+        """.trimMargin())
+
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("source-path")),
+        targets = emptyList(),
+    )
+
+    try {
+      wireRun.execute(fs, logger)
+      fail()
+    } catch (e: SchemaException) {
+      assertThat(e).hasMessage("""
+        |packages form a cycle:
+        |  locations imports people
+        |    locations/office.proto:
+        |      import "people/office_manager.proto";
+        |  people imports locations
+        |    people/employee.proto:
+        |      import "locations/office.proto";
+        |      import "locations/residence.proto";
+        """.trimMargin())
+    }
+  }
+
+  @Test
+  fun emitDeclaredOptions() {
+    writeDocumentationProto()
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("docs/src/main/proto")),
+        targets = listOf(
+            JavaTarget(
+                outDirectory = "generated/java",
+                emitDeclaredOptions = true,
+                exclusive = false
+            ),
+            KotlinTarget(
+                outDirectory = "generated/kt",
+                emitDeclaredOptions = true,
+                exclusive = false
+            )
+        )
+    )
+    wireRun.execute(fs, logger)
+    assertThat(fs.find("generated")).containsExactly(
+        "generated/java/squareup/options/DocumentationUrlOption.java",
+        "generated/kt/squareup/options/DocumentationUrlOption.kt")
+    assertThat(fs.get("generated/java/squareup/options/DocumentationUrlOption.java"))
+        .contains("public @interface DocumentationUrlOption")
+    assertThat(fs.get("generated/kt/squareup/options/DocumentationUrlOption.kt"))
+        .contains("annotation class DocumentationUrlOption")
+  }
+
+  @Test
+  fun skipDeclaredOptions() {
+    writeDocumentationProto()
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("docs/src/main/proto")),
+        targets = listOf(
+            JavaTarget(
+                outDirectory = "generated/java",
+                emitDeclaredOptions = false,
+                exclusive = false
+            ),
+            KotlinTarget(
+                outDirectory = "generated/kt",
+                emitDeclaredOptions = false,
+                exclusive = false
+            ))
+    )
+    wireRun.execute(fs, logger)
+    assertThat(fs.find("generated")).isEmpty()
+  }
+
+  @Test
+  fun emitAppliedOptions() {
+    writeDocumentationProto()
+    writeOctagonProto()
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("polygons/src/main/proto")),
+        protoPath = listOf(Location.get("docs/src/main/proto")),
+        targets = listOf(
+            JavaTarget(
+                outDirectory = "generated/java",
+                emitAppliedOptions = true,
+                exclusive = false
+            ),
+            KotlinTarget(
+                outDirectory = "generated/kt",
+                emitAppliedOptions = true,
+                exclusive = false
+            )
+        )
+    )
+    wireRun.execute(fs, logger)
+    assertThat(fs.find("generated")).containsExactly(
+        "generated/java/squareup/polygons/Octagon.java",
+        "generated/kt/squareup/polygons/Octagon.kt")
+    assertThat(fs.get("generated/java/squareup/polygons/Octagon.java"))
+        .contains("@DocumentationUrlOption(\"https://en.wikipedia.org/wiki/Octagon\")")
+    assertThat(fs.get("generated/kt/squareup/polygons/Octagon.kt"))
+        .contains("@DocumentationUrlOption(\"https://en.wikipedia.org/wiki/Octagon\")")
+  }
+
+  @Test
+  fun skipAppliedOptions() {
+    writeDocumentationProto()
+    writeOctagonProto()
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("polygons/src/main/proto")),
+        protoPath = listOf(Location.get("docs/src/main/proto")),
+        targets = listOf(
+            JavaTarget(
+                outDirectory = "generated/java",
+                emitAppliedOptions = false,
+                exclusive = false
+            ),
+            KotlinTarget(
+                outDirectory = "generated/kt",
+                emitAppliedOptions = false,
+                exclusive = false
+            )
+        )
+    )
+    wireRun.execute(fs, logger)
+    assertThat(fs.find("generated")).containsExactly(
+        "generated/java/squareup/polygons/Octagon.java",
+        "generated/kt/squareup/polygons/Octagon.kt")
+    assertThat(fs.get("generated/java/squareup/polygons/Octagon.java"))
+        .doesNotContain("@DocumentationUrl")
+    assertThat(fs.get("generated/kt/squareup/polygons/Octagon.kt"))
+        .doesNotContain("@DocumentationUrl")
+  }
+
+  @Test
+  fun importNotFoundIncludesReferencingFile() {
+    writeBlueProto()
+    writeSquareProto()
+
+    val wireRun = WireRun(
+        sourcePath = listOf(Location.get("colors/src/main/proto")),
+        protoPath = listOf(Location.get("polygons/src/main/proto")),
+        targets = listOf(NullTarget())
+    )
+
+    try {
+      wireRun.execute(fs, logger)
+      fail()
+    } catch (expected: SchemaException) {
+      assertThat(expected).hasMessage("""
+          |unable to find squareup/polygons/triangle.proto
+          |  searching 1 proto paths:
+          |    polygons/src/main/proto
+          |  for file colors/src/main/proto/squareup/colors/blue.proto
+          |unable to resolve squareup.polygons.Triangle
+          |  for field triangle (colors/src/main/proto/squareup/colors/blue.proto:7:3)
+          |  in message squareup.colors.Blue (colors/src/main/proto/squareup/colors/blue.proto:5:1)
+          """.trimMargin())
     }
   }
 
@@ -761,6 +1045,31 @@ class WireRunTest {
         |message Rhombus {
         |  optional double length = 1;
         |  optional double acute_angle = 2;
+        |}
+        """.trimMargin())
+  }
+
+  private fun writeDocumentationProto() {
+    fs.add("docs/src/main/proto/squareup/options/documentation.proto", """
+        |syntax = "proto2";
+        |package squareup.options;
+        |import "google/protobuf/descriptor.proto";
+        |
+        |extend google.protobuf.MessageOptions {
+        |  optional string documentation_url = 22200;
+        |}
+        """.trimMargin())
+  }
+
+  private fun writeOctagonProto() {
+    fs.add("polygons/src/main/proto/squareup/polygons/octagon.proto", """
+        |syntax = "proto2";
+        |package squareup.polygons;
+        |import "squareup/options/documentation.proto";
+        |
+        |message Octagon {
+        |  option (documentation_url) = "https://en.wikipedia.org/wiki/Octagon";
+        |  optional bool stop = 1;
         |}
         """.trimMargin())
   }

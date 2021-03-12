@@ -1,8 +1,8 @@
 apply plugin: 'org.jetbrains.kotlin.multiplatform'
+apply plugin: 'org.jetbrains.kotlin.plugin.serialization'
 
 kotlin {
   jvm {
-    withJava()
     compilations.create('kotlinInteropTest') {
       defaultSourceSet {
         kotlin.srcDirs += 'src/jvmKotlinInteropTest/proto-kotlin'
@@ -34,6 +34,9 @@ kotlin {
       }
       jvmTest.dependsOn jvmKotlinAndroidTest
     }
+    // FIXME(egor): withJava() has to be declared after all custom compilations.
+    // See https://youtrack.jetbrains.com/issue/KT-41506.
+    withJava()
   }
   if (kmpJsEnabled) {
     js {
@@ -57,21 +60,18 @@ kotlin {
   sourceSets {
     commonMain {
       dependencies {
-        api deps.kotlin.stdlib.common
         api project(':wire-runtime')
         api project(':wire-grpc-client')
+        implementation deps.kotlin.serializationJson
       }
     }
     commonTest {
       kotlin.srcDirs += 'src/commonTest/proto-kotlin'
+      kotlin.srcDirs += 'src/commonTest/proto-kotlin-serialization'
       dependencies {
+        implementation project(':wire-kotlin-serialization')
         implementation deps.kotlin.test.common
         implementation deps.kotlin.test.annotations
-      }
-    }
-    jvmMain {
-      dependencies {
-        api deps.kotlin.stdlib.jdk6
       }
     }
     jvmTest {
@@ -82,11 +82,6 @@ kotlin {
         implementation deps.assertj
         implementation deps.kotlin.test.junit
         implementation deps.jimfs
-      }
-    }
-    jsMain {
-      dependencies {
-        api deps.kotlin.stdlib.js
       }
     }
     jsTest {
@@ -100,12 +95,18 @@ kotlin {
     nativeTest {
       dependsOn commonTest
     }
+    darwinTest {
+      dependsOn commonTest
+    }
 
     configure([iosX64Main, iosArm64Main, linuxX64Main, macosX64Main]) {
       dependsOn nativeMain
     }
     configure([iosX64Test, iosArm64Test, linuxX64Test, macosX64Test]) {
       dependsOn nativeTest
+    }
+    configure([iosX64Test, iosArm64Test, macosX64Test]) {
+      dependsOn darwinTest
     }
     all {
       languageSettings {

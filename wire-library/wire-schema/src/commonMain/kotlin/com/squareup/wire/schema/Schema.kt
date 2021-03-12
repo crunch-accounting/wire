@@ -28,18 +28,20 @@ import kotlin.jvm.JvmOverloads
 class Schema internal constructor(protoFiles: Iterable<ProtoFile>) {
   val protoFiles: List<ProtoFile> = protoFiles.sortedBy { it.location.path }
 
-  private val protoFilesIndex: Map<ProtoType?, ProtoFile?>
+  private val protoFilesIndex: Map<ProtoType, ProtoFile>
   private val typesIndex: Map<String, Type>
   private val servicesIndex: Map<String, Service>
   init {
-    val index = mutableMapOf<ProtoType?, ProtoFile?>()
+    val index = mutableMapOf<ProtoType, ProtoFile>()
     typesIndex = buildTypesIndex(protoFiles, index)
     servicesIndex = buildServicesIndex(protoFiles, index)
     protoFilesIndex = index
   }
 
+  val types: Set<ProtoType> get() = protoFilesIndex.keys
+
   /** Returns the proto file at [path], or null if this schema has no such file.  */
-  fun protoFile(path: String): ProtoFile? = protoFiles.first { it.location.path == path }
+  fun protoFile(path: String): ProtoFile? = protoFiles.firstOrNull { it.location.path == path }
 
   /** Returns the proto file containing this [protoType], or null if there isn't such file.  */
   fun protoFile(protoType: ProtoType): ProtoFile? = protoFilesIndex[protoType]
@@ -119,17 +121,10 @@ class Schema internal constructor(protoFiles: Iterable<ProtoFile>) {
   }
 
   companion object {
-    @JvmOverloads
-    fun fromFiles(
-      sourceProtoFiles: Iterable<ProtoFile>,
-      pathFilesLoader: Loader = CoreLoader
-    ): Schema {
-      return Linker(pathFilesLoader).link(sourceProtoFiles)
-    }
 
     private fun buildTypesIndex(
       protoFiles: Iterable<ProtoFile>,
-      protoFilesIndex: MutableMap<ProtoType?, ProtoFile?>
+      protoFilesIndex: MutableMap<ProtoType, ProtoFile>
     ): Map<String, Type> {
       val typesByName = mutableMapOf<String, Type>()
 
@@ -154,13 +149,13 @@ class Schema internal constructor(protoFiles: Iterable<ProtoFile>) {
 
     private fun buildServicesIndex(
       protoFiles: Iterable<ProtoFile>,
-      protoFilesIndex: MutableMap<ProtoType?, ProtoFile?>
+      protoFilesIndex: MutableMap<ProtoType, ProtoFile>
     ): Map<String, Service> {
       val result = mutableMapOf<String, Service>()
       for (protoFile in protoFiles) {
         for (service in protoFile.services) {
-          result[service.type().toString()] = service
-          protoFilesIndex[service.type()] = protoFile
+          result[service.type.toString()] = service
+          protoFilesIndex[service.type] = protoFile
         }
       }
       return result

@@ -21,8 +21,10 @@ import kotlin.reflect.KClass
  * An abstract [ProtoAdapter] that converts values of an enum to and from integers.
  */
 actual abstract class EnumAdapter<E : WireEnum> protected actual constructor(
-  type: KClass<E>
-) : ProtoAdapter<E>(FieldEncoding.VARINT, type, null) {
+  type: KClass<E>,
+  syntax: Syntax,
+  identity: E?
+) : ProtoAdapter<E>(FieldEncoding.VARINT, type, null, syntax, identity) {
   actual override fun encodedSize(value: E): Int = commonEncodedSize(value)
 
   actual override fun encode(writer: ProtoWriter, value: E) {

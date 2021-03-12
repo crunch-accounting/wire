@@ -8,13 +8,13 @@ jar {
 }
 
 dependencies {
-  api deps.kotlin.stdlib.jdk8
   api deps.moshi
   api project(':wire-runtime')
   api project(':wire-schema')
   implementation project(':wire-compiler')
   implementation project(':wire-java-generator')
   implementation project(':wire-kotlin-generator')
+  implementation project(':wire-profiles')
   implementation deps.assertj
   implementation deps.guava
   implementation deps.jimfs

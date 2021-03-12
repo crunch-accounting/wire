@@ -16,23 +16,18 @@
 package com.squareup.wire
 
 import com.google.protobuf.ListValue
-import com.google.protobuf.NullValue.NULL_VALUE
-import com.google.protobuf.Struct
-import com.google.protobuf.Value
-import com.google.protobuf.util.JsonFormat
-import com.squareup.moshi.Moshi
-import com.squareup.wire.json.assertJsonEquals
+import com.google.protobuf.NullValue
 import org.assertj.core.api.Assertions.assertThat
+import org.assertj.core.api.Assertions.entry
 import org.junit.Assert.fail
 import org.junit.Test
-import squareup.proto3.alltypes.AllStructs
-import squareup.proto3.alltypes.AllStructsOuterClass
+import squareup.proto3.kotlin.alltypes.AllStructsOuterClass
+import squareup.proto3.java.alltypes.AllStructs as AllStructsJ
+import squareup.proto3.kotlin.alltypes.AllStructs as AllStructsK
 
 class StructTest {
   @Test fun nullValue() {
-    val googleMessage = Value.newBuilder()
-        .setNullValue(NULL_VALUE)
-        .build()
+    val googleMessage = null.toValue()
 
     val wireMessage = null
 
@@ -42,9 +37,7 @@ class StructTest {
   }
 
   @Test fun doubleValue() {
-    val googleMessage = Value.newBuilder()
-        .setNumberValue(0.25)
-        .build()
+    val googleMessage = 0.25.toValue()
 
     val wireMessage = 0.25
 
@@ -54,13 +47,13 @@ class StructTest {
   }
 
   @Test fun specialDoubleValues() {
-    val googleMessage = ListValue.newBuilder()
-        .addValues(Value.newBuilder().setNumberValue(Double.NEGATIVE_INFINITY).build())
-        .addValues(Value.newBuilder().setNumberValue(-0.0).build())
-        .addValues(Value.newBuilder().setNumberValue(0.0).build())
-        .addValues(Value.newBuilder().setNumberValue(Double.POSITIVE_INFINITY).build())
-        .addValues(Value.newBuilder().setNumberValue(Double.NaN).build())
-        .build()
+    val googleMessage = listOf(
+        Double.NEGATIVE_INFINITY,
+        -0.0,
+        0.0,
+        Double.POSITIVE_INFINITY,
+        Double.NaN
+    ).toListValue()
 
     val wireMessage = listOf(
         Double.NEGATIVE_INFINITY,
@@ -76,9 +69,7 @@ class StructTest {
   }
 
   @Test fun booleanTrue() {
-    val googleMessage = Value.newBuilder()
-        .setBoolValue(true)
-        .build()
+    val googleMessage = true.toValue()
 
     val wireMessage = true
 
@@ -88,9 +79,7 @@ class StructTest {
   }
 
   @Test fun booleanFalse() {
-    val googleMessage = Value.newBuilder()
-        .setBoolValue(false)
-        .build()
+    val googleMessage = false.toValue()
 
     val wireMessage = false
 
@@ -100,9 +89,7 @@ class StructTest {
   }
 
   @Test fun stringValue() {
-    val googleMessage = Value.newBuilder()
-        .setStringValue("Cash App!")
-        .build()
+    val googleMessage = "Cash App!".toValue()
 
     val wireMessage = "Cash App!"
 
@@ -112,9 +99,7 @@ class StructTest {
   }
 
   @Test fun emptyStringValue() {
-    val googleMessage = Value.newBuilder()
-        .setStringValue("")
-        .build()
+    val googleMessage = "".toValue()
 
     val wireMessage = ""
 
@@ -124,9 +109,7 @@ class StructTest {
   }
 
   @Test fun utf8StringValue() {
-    val googleMessage = Value.newBuilder()
-        .setStringValue("На берегу пустынных волн")
-        .build()
+    val googleMessage = "На берегу пустынных волн".toValue()
 
     val wireMessage = "На берегу пустынных волн"
 
@@ -135,21 +118,8 @@ class StructTest {
     assertThat(ProtoAdapter.STRUCT_VALUE.decode(googleMessageBytes)).isEqualTo(wireMessage)
   }
 
-  @Test fun emptyMap() {
-    val googleMessage = Struct.newBuilder().build()
-
-    val wireMessage = mapOf<String, Any?>()
-
-    val googleMessageBytes = googleMessage.toByteArray()
-    assertThat(ProtoAdapter.STRUCT_MAP.encode(wireMessage)).isEqualTo(googleMessageBytes)
-    assertThat(ProtoAdapter.STRUCT_MAP.decode(googleMessageBytes)).isEqualTo(wireMessage)
-  }
-
   @Test fun map() {
-    val googleMessage = Struct.newBuilder()
-        .putFields("a", Value.newBuilder().setStringValue("android").build())
-        .putFields("c", Value.newBuilder().setStringValue("cash").build())
-        .build()
+    val googleMessage = mapOf("a" to "android", "c" to "cash").toStruct()
 
     val wireMessage = mapOf("a" to "android", "c" to "cash")
 
@@ -159,24 +129,14 @@ class StructTest {
   }
 
   @Test fun mapOfAllTypes() {
-    val googleMessage = Struct.newBuilder()
-        .putFields("a", Value.newBuilder().setNullValue(NULL_VALUE).build())
-        .putFields("b", Value.newBuilder().setNumberValue(0.5).build())
-        .putFields("c", Value.newBuilder().setBoolValue(true).build())
-        .putFields("d", Value.newBuilder().setStringValue("cash").build())
-        .putFields("e", Value.newBuilder()
-            .setListValue(ListValue.newBuilder()
-                .addValues(Value.newBuilder().setStringValue("g").build())
-                .addValues(Value.newBuilder().setStringValue("h").build())
-                .build())
-            .build())
-        .putFields("f", Value.newBuilder()
-            .setStructValue(Struct.newBuilder()
-                .putFields("i", Value.newBuilder().setStringValue("j").build())
-                .putFields("k", Value.newBuilder().setStringValue("l").build())
-                .build())
-            .build())
-        .build()
+    val googleMessage = mapOf(
+        "a" to null,
+        "b" to 0.5,
+        "c" to true,
+        "d" to "cash",
+        "e" to listOf("g", "h"),
+        "f" to mapOf("i" to "j", "k" to "l")
+    ).toStruct()
 
     val wireMessage = mapOf(
         "a" to null,
@@ -186,6 +146,16 @@ class StructTest {
         "e" to listOf("g", "h"),
         "f" to mapOf("i" to "j", "k" to "l")
     )
+
+    val googleMessageBytes = googleMessage.toByteArray()
+    assertThat(ProtoAdapter.STRUCT_MAP.encode(wireMessage)).isEqualTo(googleMessageBytes)
+    assertThat(ProtoAdapter.STRUCT_MAP.decode(googleMessageBytes)).isEqualTo(wireMessage)
+  }
+
+  @Test fun mapWithoutEntries() {
+    val googleMessage = emptyStruct()
+
+    val wireMessage = mapOf<String, Any?>()
 
     val googleMessageBytes = googleMessage.toByteArray()
     assertThat(ProtoAdapter.STRUCT_MAP.encode(wireMessage)).isEqualTo(googleMessageBytes)
@@ -238,10 +208,7 @@ class StructTest {
   }
 
   @Test fun list() {
-    val googleMessage = ListValue.newBuilder()
-        .addValues(Value.newBuilder().setStringValue("android").build())
-        .addValues(Value.newBuilder().setStringValue("cash").build())
-        .build()
+    val googleMessage = listOf("android", "cash").toListValue()
 
     val wireMessage = listOf("android", "cash")
 
@@ -251,24 +218,14 @@ class StructTest {
   }
 
   @Test fun listOfAllTypes() {
-    val googleMessage = ListValue.newBuilder()
-        .addValues(Value.newBuilder().setNullValue(NULL_VALUE).build())
-        .addValues(Value.newBuilder().setNumberValue(0.5).build())
-        .addValues(Value.newBuilder().setBoolValue(true).build())
-        .addValues(Value.newBuilder().setStringValue("cash").build())
-        .addValues(Value.newBuilder()
-            .setListValue(ListValue.newBuilder()
-                .addValues(Value.newBuilder().setStringValue("a").build())
-                .addValues(Value.newBuilder().setStringValue("b").build())
-                .build())
-            .build())
-        .addValues(Value.newBuilder()
-            .setStructValue(Struct.newBuilder()
-                .putFields("c", Value.newBuilder().setStringValue("d").build())
-                .putFields("e", Value.newBuilder().setStringValue("f").build())
-                .build())
-            .build())
-        .build()
+    val googleMessage = listOf(
+        null,
+        0.5,
+        true,
+        "cash",
+        listOf("a", "b"),
+        mapOf("c" to "d", "e" to "f")
+    ).toListValue()
 
     val wireMessage = listOf(
         null,
@@ -278,17 +235,6 @@ class StructTest {
         listOf("a", "b"),
         mapOf("c" to "d", "e" to "f")
     )
-
-    val googleMessageBytes = googleMessage.toByteArray()
-    assertThat(ProtoAdapter.STRUCT_LIST.encode(wireMessage)).isEqualTo(googleMessageBytes)
-    assertThat(ProtoAdapter.STRUCT_LIST.decode(googleMessageBytes)).isEqualTo(wireMessage)
-  }
-
-  @Test fun emptyList() {
-    val googleMessage = ListValue.newBuilder()
-        .build()
-
-    val wireMessage = listOf<Any?>()
 
     val googleMessageBytes = googleMessage.toByteArray()
     assertThat(ProtoAdapter.STRUCT_LIST.encode(wireMessage)).isEqualTo(googleMessageBytes)
@@ -317,101 +263,283 @@ class StructTest {
     }
   }
 
-  @Test fun structJsonRoundTrip() {
-    val json = """{
-         |  "struct": {"a": 1.0},
-         |  "list": ["a", 3.0],
-         |  "nullValue": null,
-         |  "valueA": "a",
-         |  "valueB": 33.0,
-         |  "valueC": true,
-         |  "valueD": null,
-         |  "valueE": {"a": 1.0},
-         |  "valueF": ["a", 3.0]
-         |}""".trimMargin()
+  @Test fun listValueWithoutElements() {
+    val googleMessage = ListValue.newBuilder().build()
 
-    val wireAllStruct = AllStructs(
+    val wireMessage = listOf<Any?>()
+
+    val googleMessageBytes = googleMessage.toByteArray()
+    assertThat(ProtoAdapter.STRUCT_LIST.encode(wireMessage)).isEqualTo(googleMessageBytes)
+    assertThat(ProtoAdapter.STRUCT_LIST.decode(googleMessageBytes)).isEqualTo(wireMessage)
+  }
+
+  @Test fun nullMapAndListAsFields() {
+    val protocAllStruct = AllStructsOuterClass.AllStructs.newBuilder().build()
+    val wireAllStructJava = AllStructsJ.Builder().build()
+    val wireAllStructKotlin = AllStructsK()
+
+    val protocAllStructBytes = protocAllStruct.toByteArray()
+    assertThat(AllStructsJ.ADAPTER.encode(wireAllStructJava)).isEqualTo(protocAllStructBytes)
+    assertThat(AllStructsJ.ADAPTER.decode(protocAllStructBytes)).isEqualTo(wireAllStructJava)
+    assertThat(AllStructsK.ADAPTER.encode(wireAllStructKotlin)).isEqualTo(protocAllStructBytes)
+    assertThat(AllStructsK.ADAPTER.decode(protocAllStructBytes)).isEqualTo(wireAllStructKotlin)
+  }
+
+  @Test fun emptyMapAndListAsFields() {
+    val protocAllStruct = AllStructsOuterClass.AllStructs.newBuilder()
+        .setStruct(emptyStruct())
+        .setList(emptyListValue())
+        .build()
+    val wireAllStructJava = AllStructsJ.Builder()
+        .struct(emptyMap<String, Any?>())
+        .list(emptyList<Any?>())
+        .build()
+    val wireAllStructKotlin = AllStructsK(
+        struct = emptyMap<String, Any?>(),
+        list = emptyList<Any?>())
+
+    val protocAllStructBytes = protocAllStruct.toByteArray()
+    assertThat(AllStructsJ.ADAPTER.encode(wireAllStructJava)).isEqualTo(protocAllStructBytes)
+    assertThat(AllStructsJ.ADAPTER.decode(protocAllStructBytes)).isEqualTo(wireAllStructJava)
+    assertThat(AllStructsK.ADAPTER.encode(wireAllStructKotlin)).isEqualTo(protocAllStructBytes)
+    assertThat(AllStructsK.ADAPTER.decode(protocAllStructBytes)).isEqualTo(wireAllStructKotlin)
+  }
+
+  // Note: We are not testing nulls because while protoc emits `NULL_VALUE`s, Wire doesn't.
+  @Test fun structRoundTripWithData() {
+    val protocAllStruct = AllStructsOuterClass.AllStructs.newBuilder()
+        .setStruct(mapOf("a" to 1.0).toStruct())
+        .setList(listOf("a", 3.0).toListValue())
+        .setNullValue(NullValue.NULL_VALUE)
+        .setValueA("a".toValue())
+        .setValueB(33.0.toValue())
+        .setValueC(true.toValue())
+        .setValueE(mapOf("a" to 1.0).toValue())
+        .setValueF(listOf("a", 3.0).toValue())
+        .build()
+    val wireAllStructJava = AllStructsJ.Builder()
+        .struct(mapOf("a" to 1.0))
+        .list(listOf("a", 3.0))
+        .null_value(null)
+        .value_a("a")
+        .value_b(33.0)
+        .value_c(true)
+        .value_e(mapOf("a" to 1.0))
+        .value_f(listOf("a", 3.0))
+        .build()
+    val wireAllStructKotlin = AllStructsK(
         struct = mapOf("a" to 1.0),
         list = listOf("a", 3.0),
         null_value = null,
         value_a = "a",
         value_b = 33.0,
         value_c = true,
-        value_d = null,
         value_e = mapOf("a" to 1.0),
         value_f = listOf("a", 3.0)
     )
 
-    val moshi = Moshi.Builder().add(WireJsonAdapterFactory()).build()
-    val allStructAdapter = moshi.adapter(AllStructs::class.java)
-    assertJsonEquals(allStructAdapter.toJson(wireAllStruct), json)
-    assertThat(allStructAdapter.fromJson(json)).isEqualTo(wireAllStruct)
+    val protocAllStructBytes = protocAllStruct.toByteArray()
+    assertThat(AllStructsJ.ADAPTER.encode(wireAllStructJava)).isEqualTo(protocAllStructBytes)
+    assertThat(AllStructsJ.ADAPTER.decode(protocAllStructBytes)).isEqualTo(wireAllStructJava)
+    assertThat(AllStructsK.ADAPTER.encode(wireAllStructKotlin)).isEqualTo(protocAllStructBytes)
+    assertThat(AllStructsK.ADAPTER.decode(protocAllStructBytes)).isEqualTo(wireAllStructKotlin)
   }
 
-  @Test fun structJsonRoundTripWithEmptyOrNestedMapAndList() {
-    val json = """{
-         |  "struct": {"a": null},
-         |  "list": [],
-         |  "valueA": {
-         |    "a": [
-         |      "b",
-         |      2.0,
-         |      {"c": false}
-         |    ]
-         |  },
-         |  "valueB": [{"d": null, "e": "trois"}],
-         |  "valueC": [],
-         |  "valueD": {},
-         |  "valueE": null,
-         |  "valueF": null
-         |}""".trimMargin()
-    // Wire prints null value members while protoc doesn't.
-    val jsonWithNullValue = """{"nullValue": null, ${json.substring(1)}"""
+  @Test fun javaListsAreDeeplyImmutable() {
+    val list = mutableListOf(mutableMapOf("a" to "b"), mutableListOf("c"), "d", 5.0, false, null)
 
-    val protocAllStruct = AllStructsOuterClass.AllStructs.newBuilder()
-        .setStruct(
-            Struct.newBuilder().putFields("a", Value.newBuilder().setNullValue(NULL_VALUE).build())
-                .build())
-        .setList(ListValue.newBuilder().build())
-        .setValueA(Value.newBuilder().setStructValue(Struct.newBuilder().putFields("a",
-            Value.newBuilder().setListValue(
-                ListValue.newBuilder().addValues(Value.newBuilder().setStringValue("b").build())
-                    .addValues(Value.newBuilder().setNumberValue(2.0).build()).addValues(
-                    Value.newBuilder().setStructValue(Struct.newBuilder()
-                        .putFields("c", Value.newBuilder().setBoolValue(false).build()).build())
-                        .build()).build()).build())).build())
-        .setValueB(Value.newBuilder().setListValue(ListValue.newBuilder().addValues(
-            Value.newBuilder().setStructValue(Struct.newBuilder()
-                .putFields("d", Value.newBuilder().setNullValue(NULL_VALUE).build())
-                .putFields("e", Value.newBuilder().setStringValue("trois").build()).build())
-                .build()).build()).build())
-        .setValueC(Value.newBuilder().setListValue(ListValue.newBuilder().build()).build())
-        .setValueD(Value.newBuilder().setStructValue(Struct.newBuilder().build()).build())
-        .setValueE(Value.newBuilder().setNullValue(NULL_VALUE).build())
-        .setValueF(Value.newBuilder().setNullValue(NULL_VALUE).build())
+    val allStructs = AllStructsJ.Builder()
+        .list(list)
+        .build()
+    assertThat(allStructs.list.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the list. Wire should have defensive copies.
+    (list[0] as MutableMap<*, *>).clear()
+    (list[1] as MutableList<*>).clear()
+    list.clear()
+
+    assertThat(allStructs.list)
+        .containsExactly(mapOf("a" to "b"), listOf("c"), "d", 5.0, false, null)
+  }
+
+  @Test fun kotlinListsAreDeeplyImmutable() {
+    val list = mutableListOf(mutableMapOf("a" to "b"), mutableListOf("c"), "d", 5.0, false, null)
+
+    val allStructs = AllStructsK.Builder()
+        .list(list)
         .build()
 
-    val jsonPrinter = JsonFormat.printer()
-    assertJsonEquals(jsonPrinter.print(protocAllStruct), json)
-    val jsonParser = JsonFormat.parser()
-    val protocParsed = AllStructsOuterClass.AllStructs.newBuilder()
-        .apply { jsonParser.merge(json, this) }
-        .build()
-    assertThat(protocParsed).isEqualTo(protocAllStruct)
+    assertThat(allStructs.list!!.isDeeplyUnmodifiable()).isTrue()
 
-    val wireAllStruct = AllStructs(
-        struct = mapOf("a" to null),
-        list = emptyList<Any>(),
-        value_a = mapOf("a" to listOf("b", 2.0, mapOf("c" to false))),
-        value_b = listOf(mapOf("d" to null, "e" to "trois")),
-        value_c = emptyList<Any>(),
-        value_d = emptyMap<String, Any>()
+    // Mutate the values used to create the list. Wire should have defensive copies.
+    (list[0] as MutableMap<*, *>).clear()
+    (list[1] as MutableList<*>).clear()
+    list.clear()
+
+    assertThat(allStructs.list)
+        .containsExactly(mapOf("a" to "b"), listOf("c"), "d", 5.0, false, null)
+  }
+
+  @Test fun javaMapsAreDeeplyImmutable() {
+    val map = mutableMapOf(
+        "a" to mutableMapOf("g" to "h"),
+        "b" to mutableListOf("i"),
+        "c" to "j",
+        "d" to 5.0,
+        "e" to false,
+        "f" to null
     )
 
-    val moshi = Moshi.Builder().add(WireJsonAdapterFactory()).build()
-    val allStructAdapter = moshi.adapter(AllStructs::class.java)
-    assertJsonEquals(allStructAdapter.toJson(wireAllStruct), jsonWithNullValue)
-    assertThat(allStructAdapter.fromJson(json)).isEqualTo(wireAllStruct)
-    assertThat(allStructAdapter.fromJson(jsonWithNullValue)).isEqualTo(wireAllStruct)
+    val allStructs = AllStructsJ.Builder()
+        .struct(map)
+        .build()
+    assertThat(allStructs.struct.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the map. Wire should have defensive copies.
+    (map["a"] as MutableMap<*, *>).clear()
+    (map["b"] as MutableList<*>).clear()
+    map.clear()
+
+    assertThat(allStructs.struct).containsExactly(
+        entry("a", mapOf("g" to "h")),
+        entry("b", listOf("i")),
+        entry("c", "j"),
+        entry("d", 5.0),
+        entry("e", false),
+        entry("f", null)
+    )
+  }
+
+  @Test fun kotlinMapsAreDeeplyImmutable() {
+    val map = mutableMapOf(
+        "a" to mutableMapOf("g" to "h"),
+        "b" to mutableListOf("i"),
+        "c" to "j",
+        "d" to 5.0,
+        "e" to false,
+        "f" to null
+    )
+
+    val allStructs = AllStructsK.Builder()
+        .struct(map)
+        .build()
+    assertThat(allStructs.struct.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the map. Wire should have defensive copies.
+    (map["a"] as MutableMap<*, *>).clear()
+    (map["b"] as MutableList<*>).clear()
+    map.clear()
+
+    assertThat(allStructs.struct).containsExactly(
+        entry("a", mapOf("g" to "h")),
+        entry("b", listOf("i")),
+        entry("c", "j"),
+        entry("d", 5.0),
+        entry("e", false),
+        entry("f", null)
+    )
+  }
+
+  @Test fun nonStructTypeCannotBeConstructed() {
+    try {
+      AllStructsK.Builder()
+          .struct(mapOf("a" to 1)) // Int.
+          .build()
+    } catch (e: IllegalArgumentException) {
+      assertThat(e).hasMessage("struct value struct must be a JSON type " +
+          "(null, Boolean, Double, String, List, or Map) but was class kotlin.Int: 1")
+    }
+  }
+
+  @Test fun javaStructsInMapValuesAreDeeplyImmutable() {
+    val map = mutableMapOf("a" to "b")
+
+    val allStructs = AllStructsJ.Builder()
+        .map_int32_struct(mapOf(5 to map))
+        .build()
+    assertThat(allStructs.map_int32_struct.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the map. Wire should have defensive copies.
+    map.clear()
+
+    assertThat(allStructs.map_int32_struct).containsExactly(entry(5, mapOf("a" to "b")))
+  }
+
+  @Test fun kotlinStructsInMapValuesAreDeeplyImmutable() {
+    val map = mutableMapOf("a" to "b")
+
+    val allStructs = AllStructsK.Builder()
+        .map_int32_struct(mapOf(5 to map))
+        .build()
+    assertThat(allStructs.map_int32_struct.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the map. Wire should have defensive copies.
+    map.clear()
+
+    assertThat(allStructs.map_int32_struct).containsExactly(entry(5, mapOf("a" to "b")))
+  }
+
+  @Test fun javaStructsInListValuesAreDeeplyImmutable() {
+    val map = mutableMapOf("a" to "b")
+
+    val allStructs = AllStructsJ.Builder()
+        .rep_struct(listOf(map))
+        .build()
+    assertThat(allStructs.rep_struct.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the map. Wire should have defensive copies.
+    map.clear()
+
+    assertThat(allStructs.rep_struct).containsExactly(mapOf("a" to "b"))
+  }
+
+  @Test fun kotlinStructsInListValuesAreDeeplyImmutable() {
+    val map = mutableMapOf("a" to "b")
+
+    val allStructs = AllStructsK.Builder()
+        .rep_struct(listOf(map))
+        .build()
+    assertThat(allStructs.rep_struct.isDeeplyUnmodifiable()).isTrue()
+
+    // Mutate the values used to create the map. Wire should have defensive copies.
+    map.clear()
+
+    assertThat(allStructs.rep_struct).containsExactly(mapOf("a" to "b"))
+  }
+
+  private fun Any?.isDeeplyUnmodifiable(): Boolean {
+    return when (this) {
+      null -> true
+      is String -> true
+      is Double -> true
+      is Int -> true
+      is Boolean -> true
+      is List<*> -> {
+        this.all { it.isDeeplyUnmodifiable() } && this.isUnmodifiable()
+      }
+      is Map<*, *> -> {
+        this.all { it.key.isDeeplyUnmodifiable() && it.value.isDeeplyUnmodifiable() } &&
+            this.isUnmodifiable()
+      }
+      else -> false
+    }
+  }
+
+  private fun List<*>.isUnmodifiable(): Boolean {
+    try {
+      (this as MutableList<Any>).add("x")
+      return false
+    } catch (_: UnsupportedOperationException) {
+      return true
+    }
+  }
+
+  private fun Map<*, *>.isUnmodifiable(): Boolean {
+    try {
+      (this as MutableMap<Any, Any>).put("x", "x")
+      return false
+    } catch (_: UnsupportedOperationException) {
+      return true
+    }
   }
 }

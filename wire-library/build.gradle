@@ -9,6 +9,7 @@ buildscript {
 
   dependencies {
     classpath deps.plugins.kotlin
+    classpath deps.plugins.kotlinSerialization
     classpath deps.plugins.shadow
     classpath deps.plugins.japicmp
     classpath deps.plugins.mavenPublish
@@ -30,6 +31,7 @@ allprojects {
   repositories {
     mavenCentral()
     google()
+    jcenter()
   }
 }
 
@@ -47,6 +49,8 @@ subprojects { project ->
   tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
     kotlinOptions {
       jvmTarget = "1.8"
+      // Disable optimized callable references. See https://youtrack.jetbrains.com/issue/KT-37435
+      freeCompilerArgs += "-Xno-optimized-callable-references"
     }
   }
 
@@ -55,27 +59,31 @@ subprojects { project ->
     targetCompatibility = JavaVersion.VERSION_1_8
   }
 
-  if (project.name != 'wire-runtime' &&
-      project.name != 'wire-schema' &&
-      project.name != 'sample' &&
-      project.name != 'wire-codegen-sample' &&
-      project.name != 'japicmp' &&
-      project.name != 'wire-tests' &&
-      project.name != 'wire-grpc-client') {
-    apply plugin: 'com.vanniktech.maven.publish'
-  } else {
-    tasks.create('uploadArchives') {
-      // TODO(egorand): Find out why this became a problem.
-      // No-op task to prevent Gradle from calling a real uploadArchives task which is added by an
-      // unknown plugin (or Gradle itself) and fails for multiplatform projects.
+  if (!project.name.endsWith('-swift')) {
+    // TODO this should use plugins.withId first rather than names
+    if (project.name != 'wire-runtime' &&
+        project.name != 'wire-kotlin-serialization' &&
+        project.name != 'wire-schema' &&
+        project.name != 'sample' &&
+        project.name != 'wire-codegen-sample' &&
+        project.name != 'japicmp' &&
+        project.name != 'wire-tests' &&
+        project.name != 'wire-grpc-client') {
+      apply plugin: 'com.vanniktech.maven.publish'
+    } else {
+      tasks.create('uploadArchives') {
+        // TODO(egorand): Find out why this became a problem.
+        // No-op task to prevent Gradle from calling a real uploadArchives task which is added by an
+        // unknown plugin (or Gradle itself) and fails for multiplatform projects.
+      }
     }
-  }
-  apply plugin: 'checkstyle'
+    apply plugin: 'checkstyle'
 
-  afterEvaluate {
-    checkstyle {
-      toolVersion '7.7'
-      sourceSets = [project.sourceSets.main]
+    afterEvaluate {
+      checkstyle {
+        toolVersion '7.7'
+        sourceSets = [project.sourceSets.main]
+      }
     }
   }
 }

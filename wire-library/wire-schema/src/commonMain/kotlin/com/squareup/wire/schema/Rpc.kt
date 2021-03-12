@@ -18,7 +18,7 @@ package com.squareup.wire.schema
 import com.squareup.wire.schema.internal.parser.RpcElement
 import kotlin.jvm.JvmStatic
 
-class Rpc private constructor(
+data class Rpc(
   val location: Location,
   val name: String,
   val documentation: String,
@@ -42,15 +42,15 @@ class Rpc private constructor(
     responseType = linker.resolveMessageType(responseTypeElement)
   }
 
-  fun linkOptions(linker: Linker) {
+  fun linkOptions(linker: Linker, validate: Boolean) {
     val linker = linker.withContext(this)
-    options.link(linker)
+    options.link(linker, location, validate)
   }
 
   fun validate(linker: Linker) {
     val linker = linker.withContext(this)
-    linker.validateImport(location, requestType!!)
-    linker.validateImport(location, responseType!!)
+    linker.validateImportForType(location, requestType!!)
+    linker.validateImportForType(location, responseType!!)
   }
 
   fun retainAll(schema: Schema, markSet: MarkSet): Rpc? {

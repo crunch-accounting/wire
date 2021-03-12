@@ -26,28 +26,36 @@ class Linker {
   private val fileLinkers: MutableMap<String, FileLinker>
   private val fileOptionsQueue: MutableQueue<FileLinker>
   private val protoTypeNames: MutableMap<String, Type>
-  private val errors: MutableList<String>
   private val contextStack: List<Any>
-  private val requestedTypes: MutableSet<ProtoType?>
+  private val requestedTypes: MutableSet<ProtoType>
+  private val requestedFields: MutableSet<Field>
+  private val permitPackageCycles: Boolean
 
-  internal constructor(loader: Loader) {
+  /** Errors accumulated by this load. */
+  val errors: ErrorCollector
+
+  constructor(loader: Loader, errors: ErrorCollector, permitPackageCycles: Boolean) {
     this.loader = loader
-    fileLinkers = mutableMapOf()
-    fileOptionsQueue = mutableQueueOf()
-    protoTypeNames = mutableMapOf()
-    contextStack = emptyList()
-    errors = mutableListOf()
-    requestedTypes = mutableSetOf()
+    this.fileLinkers = mutableMapOf()
+    this.fileOptionsQueue = mutableQueueOf()
+    this.protoTypeNames = mutableMapOf()
+    this.contextStack = emptyList()
+    this.requestedTypes = mutableSetOf()
+    this.requestedFields = mutableSetOf()
+    this.errors = errors
+    this.permitPackageCycles = permitPackageCycles
   }
 
   private constructor(enclosing: Linker, additionalContext: Any) {
-    loader = enclosing.loader
-    fileLinkers = enclosing.fileLinkers
-    fileOptionsQueue = enclosing.fileOptionsQueue
-    protoTypeNames = enclosing.protoTypeNames
-    contextStack = enclosing.contextStack + additionalContext
-    errors = enclosing.errors
-    requestedTypes = enclosing.requestedTypes
+    this.loader = enclosing.loader
+    this.fileLinkers = enclosing.fileLinkers
+    this.fileOptionsQueue = enclosing.fileOptionsQueue
+    this.protoTypeNames = enclosing.protoTypeNames
+    this.contextStack = enclosing.contextStack + additionalContext
+    this.requestedTypes = enclosing.requestedTypes
+    this.requestedFields = enclosing.requestedFields
+    this.errors = enclosing.errors.at(additionalContext)
+    this.permitPackageCycles = false
   }
 
   /** Returns a linker for [path], loading the file if necessary. */
@@ -55,7 +63,7 @@ class Linker {
     val existing = fileLinkers[path]
     if (existing != null) return existing
 
-    val protoFile = loader.load(path)
+    val protoFile = loader.withErrors(errors).load(path)
     val result = FileLinker(protoFile, withContext(protoFile))
     fileLinkers[path] = result
     fileOptionsQueue += result
@@ -92,16 +100,19 @@ class Linker {
     }
 
     for (fileLinker in sourceFiles) {
-      // TODO(benoit) Create a map to cache those.
       val syntaxRules = SyntaxRules.get(fileLinker.protoFile.syntax)
-      fileLinker.linkOptions(syntaxRules)
+      fileLinker.linkOptions(syntaxRules, validate = true)
+    }
+
+    for (fileLinker in sourceFiles) {
+      fileLinker.requireImportedExtensionOptionsLinked(validate = false)
     }
 
     // For compactness we'd prefer to link the options of source files only. But we link file
     // options on referenced files to make sure that java_package is populated.
     while (fileOptionsQueue.isNotEmpty()) {
       val fileLinker = fileOptionsQueue.poll()!!
-      fileLinker.requireFileOptionsLinked()
+      fileLinker.requireFileOptionsLinked(validate = false)
     }
 
     for (fileLinker in sourceFiles) {
@@ -109,9 +120,13 @@ class Linker {
       fileLinker.validate(syntaxRules)
     }
 
-    if (errors.isNotEmpty()) {
-      throw SchemaException(errors)
+    val cycleChecker = CycleChecker(fileLinkers, errors)
+    cycleChecker.checkForImportCycles()
+    if (!permitPackageCycles) {
+      cycleChecker.checkForPackageCycles()
     }
+
+    errors.throwIfNonEmpty()
 
     val result = mutableListOf<ProtoFile>()
     for (fileLinker in fileLinkers.values) {
@@ -125,8 +140,12 @@ class Linker {
           .any { type ->
             requestedTypes.contains(type.type)
           }
-      if (anyTypeIsUsed) {
-        result.add(fileLinker.protoFile.retainLinked(requestedTypes as Set<ProtoType>))
+      val anyFieldIsUsed = fileLinker.protoFile.extendList
+          .any { extend ->
+            extend.fields.any { it in requestedFields }
+          }
+      if (anyTypeIsUsed || anyFieldIsUsed) {
+        result.add(fileLinker.protoFile.retainLinked(requestedTypes.toSet(), requestedFields))
       }
     }
 
@@ -148,14 +167,14 @@ class Linker {
 
     if (type.isScalar) {
       if (messageOnly) {
-        addError("expected a message but was $name")
+        errors += "expected a message but was $name"
       }
       return type
     }
 
     if (type.isMap) {
       if (messageOnly) {
-        addError("expected a message but was $name")
+        errors += "expected a message but was $name"
       }
       val keyType = resolveType(type.keyType.toString(), false)
       val valueType = resolveType(type.valueType.toString(), false)
@@ -172,12 +191,12 @@ class Linker {
     }
 
     if (resolved == null) {
-      addError("unable to resolve $name")
+      errors += "unable to resolve $name"
       return ProtoType.BYTES // Just return any placeholder.
     }
 
     if (messageOnly && resolved !is MessageType) {
-      addError("expected a message but was $name")
+      errors += "expected a message but was $name"
       return ProtoType.BYTES // Just return any placeholder.
     }
 
@@ -298,6 +317,11 @@ class Linker {
     return result
   }
 
+  /** Mark a field as used in an option so its file is retained in the schema. */
+  fun request(field: Field) {
+    requestedFields.add(field)
+  }
+
   /** Returns the field named [field] on the message type of [self]. */
   fun dereference(
     self: Field,
@@ -321,7 +345,10 @@ class Linker {
     return null // Unable to traverse this field path.
   }
 
-  /** Validate that the tags of [fields] are unique and in range. */
+  /**
+   * Validate that the tags of [fields] are unique and in range, that proto3 message cannot
+   * reference proto2 enums.
+   */
   fun validateFields(
     fields: Iterable<Field>,
     reserveds: List<Reserved>,
@@ -334,15 +361,15 @@ class Linker {
     for (field in fields) {
       val tag = field.tag
       if (!tag.isValidTag()) {
-        withContext(field).addError("tag is out of range: $tag")
+        errors.at(field) += "tag is out of range: $tag"
       }
 
       for (reserved in reserveds) {
         if (reserved.matchesTag(tag)) {
-          withContext(field).addError("tag $tag is reserved (${reserved.location})")
+          errors.at(field) += "tag $tag is reserved (${reserved.location})"
         }
         if (reserved.matchesName(field.name)) {
-          withContext(field).addError("name '${field.name}' is reserved (${reserved.location})")
+          errors.at(field) += "name '${field.name}' is reserved (${reserved.location})"
         }
       }
 
@@ -350,8 +377,12 @@ class Linker {
       nameToField.getOrPut(field.qualifiedName, { mutableSetOf() }).add(field)
       // We allow JSON collisions for extensions.
       if (!field.isExtension) {
-        jsonNameToField.getOrPut(syntaxRules.jsonName(field.name), { mutableSetOf() }).add(field)
+        jsonNameToField
+            .getOrPut(syntaxRules.jsonName(field.name, field.declaredJsonName), { mutableSetOf() })
+            .add(field)
       }
+
+      syntaxRules.validateTypeReference(get(field.type!!), errors.at(field))
     }
 
     for ((key, values) in tagToField) {
@@ -361,7 +392,7 @@ class Linker {
         values.forEachIndexed { index, field ->
           error.append("\n  ${index + 1}. ${field.name} (${field.location})")
         }
-        addError(error.toString())
+        errors += error.toString()
       }
     }
 
@@ -375,7 +406,7 @@ class Linker {
         collidingFields.forEachIndexed { index, field ->
           error.append("\n  ${index + 1}. ${field.name} (${field.location})")
         }
-        addError(error.toString())
+        errors += error.toString()
       }
     }
 
@@ -383,11 +414,11 @@ class Linker {
       for ((jsonName, fields) in jsonNameToField) {
         if (fields.size > 1) {
           val error = StringBuilder()
-          error.append("multiple fields share same JSON camel-case name '${jsonName}':")
+          error.append("multiple fields share same JSON name '${jsonName}':")
           fields.forEachIndexed { index, field ->
             error.append("\n  ${index + 1}. ${field.name} (${field.location})")
           }
-          addError(error.toString())
+          errors += error.toString()
         }
       }
     }
@@ -412,12 +443,12 @@ class Linker {
                 "(${enumType.constant(constant)!!.location})")
           }
         }
-        addError(error)
+        errors += error
       }
     }
   }
 
-  fun validateImport(
+  fun validateImportForType(
     location: Location,
     type: ProtoType
   ) {
@@ -432,56 +463,21 @@ class Linker {
     val requiredImport = get(type)!!.location.path
     val fileLinker = getFileLinker(path)
     if (path != requiredImport && !fileLinker.effectiveImports().contains(requiredImport)) {
-      addError("$path needs to import $requiredImport")
+      errors += "$path needs to import $requiredImport"
+    }
+  }
+
+  fun validateImportForPath(
+    location: Location,
+    requiredImport: String
+  ) {
+    val path = location.path
+    val fileLinker = getFileLinker(path)
+    if (path != requiredImport && !fileLinker.effectiveImports().contains(requiredImport)) {
+      errors += "$path needs to import $requiredImport"
     }
   }
 
   /** Returns a new linker that uses [context] to resolve type names and report errors. */
-  fun withContext(context: Any): Linker {
-    return Linker(this, context)
-  }
-
-  fun addError(message: String) {
-    val error = StringBuilder()
-    error.append(message)
-
-    for (i in contextStack.indices.reversed()) {
-      val context = contextStack[i]
-      val prefix = if (i == contextStack.size - 1) "\n  for" else "\n  in"
-
-      when (context) {
-        is Rpc -> {
-          error.append("$prefix rpc ${context.name} (${context.location})")
-        }
-
-        is Extend -> {
-          val type = context.type
-          error.append(
-              if (type != null) "$prefix extend $type (${context.location})"
-              else "$prefix extend (${context.location})")
-        }
-
-        is Field -> {
-          error.append("$prefix field ${context.name} (${context.location})")
-        }
-
-        is MessageType -> {
-          error.append("$prefix message ${context.type} (${context.location})")
-        }
-
-        is EnumType -> {
-          error.append("$prefix enum ${context.type} (${context.location})")
-        }
-
-        is Service -> {
-          error.append("$prefix service ${context.type()} (${context.location()})")
-        }
-
-        is Extensions -> {
-          error.append("$prefix extensions (${context.location})")
-        }
-      }
-    }
-    errors.add(error.toString())
-  }
+  fun withContext(context: Any) = Linker(this, context)
 }

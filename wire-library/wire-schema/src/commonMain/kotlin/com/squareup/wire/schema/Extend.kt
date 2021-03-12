@@ -19,7 +19,7 @@ import com.squareup.wire.schema.Field.Companion.retainAll
 import com.squareup.wire.schema.internal.parser.ExtendElement
 import kotlin.jvm.JvmStatic
 
-class Extend private constructor(
+data class Extend(
   val location: Location,
   val documentation: String,
   val name: String,
@@ -36,21 +36,39 @@ class Extend private constructor(
     if (type != null) {
       (type as MessageType).addExtensionFields(fields)
     }
+    for (field in fields) {
+      field.link(linker)
+    }
+  }
+
+  fun linkOptions(linker: Linker, syntaxRules: SyntaxRules, validate: Boolean) {
+    val linker = linker.withContext(this)
+    for (field in fields) {
+      field.linkOptions(linker, syntaxRules, validate)
+    }
   }
 
   fun validate(linker: Linker, syntaxRules: SyntaxRules) {
     val linker = linker.withContext(this)
-    linker.validateImport(location, type!!)
+    linker.validateImportForType(location, type!!)
 
-    if (!syntaxRules.canExtend(ProtoType.get(name))) {
-      linker.addError("extensions are not allowed [proto3]")
-    }
+    syntaxRules.validateExtension(ProtoType.get(name), linker.errors)
   }
 
   fun retainAll(schema: Schema, markSet: MarkSet): Extend? {
     val retainedFields = retainAll(schema, markSet, type!!, fields)
     if (retainedFields.isEmpty()) return null
-    return Extend(location, documentation, name, retainedFields)
+    val result = Extend(location, documentation, name, retainedFields)
+    result.type = type
+    return result
+  }
+
+  fun retainLinked(linkedFields: Set<Field>): Extend? {
+    val retainedFields = fields.filter { it in linkedFields }
+    if (retainedFields.isEmpty()) return null
+    val result = Extend(location, documentation, name, retainedFields)
+    result.type = type
+    return result
   }
 
   companion object {

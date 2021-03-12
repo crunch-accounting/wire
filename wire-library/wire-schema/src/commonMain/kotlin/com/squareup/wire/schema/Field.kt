@@ -21,7 +21,7 @@ import com.squareup.wire.schema.internal.parser.FieldElement
 import com.squareup.wire.schema.internal.parser.OptionElement.Companion.PACKED_OPTION_ELEMENT
 import kotlin.jvm.JvmStatic
 
-class Field private constructor(
+data class Field(
   val packageName: String?,
 
   val location: Location,
@@ -43,7 +43,9 @@ class Field private constructor(
 
   val isExtension: Boolean,
 
-  val isOneOf: Boolean
+  val isOneOf: Boolean,
+
+  val declaredJsonName: String?
 ) {
   // Null until this field is linked.
   var type: ProtoType? = null
@@ -88,6 +90,9 @@ class Field private constructor(
   var jsonName: String? = null
     private set
 
+  val member: ProtoMember
+    get() = ProtoMember.get(type!!, this)
+
   private fun isPackable(linker: Linker, type: ProtoType): Boolean {
     return type != ProtoType.STRING &&
         type != ProtoType.BYTES &&
@@ -98,9 +103,9 @@ class Field private constructor(
     type = linker.withContext(this).resolveType(elementType)
   }
 
-  fun linkOptions(linker: Linker, syntaxRules: SyntaxRules) {
+  fun linkOptions(linker: Linker, syntaxRules: SyntaxRules, validate: Boolean) {
     val linker = linker.withContext(this)
-    options.link(linker)
+    options.link(linker, location, validate)
     deprecated = options.get(DEPRECATED)
     val packed = options.get(PACKED)
         ?: if (syntaxRules.isPackedByDefault(type!!, label)) PACKED_OPTION_ELEMENT.value else null
@@ -109,34 +114,40 @@ class Field private constructor(
 
     encodeMode =
         syntaxRules.getEncodeMode(type!!, label, isPacked = packed == "true", isOneOf = isOneOf)
-    jsonName = syntaxRules.jsonName(name)
+    jsonName = syntaxRules.jsonName(name, declaredJsonName)
   }
 
   fun validate(linker: Linker, syntaxRules: SyntaxRules) {
     val linker = linker.withContext(this)
     if (isPacked && !isPackable(linker, type!!)) {
-      linker.addError("packed=true not permitted on $type")
+      linker.errors += "packed=true not permitted on $type"
     }
-    if (isExtension && isRequired) {
-      linker.addError("extension fields cannot be required")
+    if (isExtension) {
+      if (isRequired) {
+        linker.errors += "extension fields cannot be required"
+      }
+      if (type!!.isMap) {
+        linker.errors += "extension fields cannot be a map"
+      }
     }
-    if (default != null && !syntaxRules.allowUserDefinedDefaultValue()) {
-      linker.addError("user-defined default values are not permitted [proto3]")
+    syntaxRules.validateDefaultValue(default != null, linker.errors)
+    if (type!!.isMap) {
+      val valueType = linker.get(type!!.valueType!!)
+      if (valueType is EnumType && valueType.constants[0].tag != 0) {
+        linker.errors += "enum value in map must define 0 as the first value"
+      }
     }
-    linker.validateImport(location, type!!)
+    linker.validateImportForType(location, type!!)
   }
 
   fun retainAll(schema: Schema, markSet: MarkSet, enclosingType: ProtoType): Field? {
-    if (!isUsedAsOption(schema, markSet, enclosingType)) {
-      // If the type is null this field was never linked. Prune it.
-      // TODO(jwilson): perform this transformation in the Linker.
-      val type = type ?: return null
+    // TODO(jwilson): perform this transformation in the Linker.
+    val type = type ?: return null
 
-      // For map types only the value can participate in pruning as the key will always be scalar.
-      if (type.isMap && type.valueType!! !in markSet) return null
+    // For map types only the value can participate in pruning as the key will always be scalar.
+    if (type.isMap && type.valueType!! !in markSet) return null
 
-      if (!markSet.contains(type)) return null
-    }
+    if (!markSet.contains(type)) return null
 
     val memberName = if (isExtension) qualifiedName else name
     val protoMember = ProtoMember.get(enclosingType, memberName)
@@ -160,7 +171,8 @@ class Field private constructor(
         elementType = elementType,
         options = options,
         isExtension = isExtension,
-        isOneOf = isOneOf
+        isOneOf = isOneOf,
+        declaredJsonName = declaredJsonName,
     )
     result.type = type
     result.deprecated = deprecated
@@ -168,49 +180,6 @@ class Field private constructor(
     result.isRedacted = isRedacted
     result.jsonName = jsonName
     return result
-  }
-
-  private fun isUsedAsOption(schema: Schema, markSet: MarkSet, enclosingType: ProtoType): Boolean {
-    for (protoFile in schema.protoFiles) {
-      if (protoFile.types.any { isUsedAsOption(markSet, enclosingType, it) }) return true
-      if (protoFile.services.any { isUsedAsOption(markSet, enclosingType, it) }) return true
-    }
-    return false
-  }
-
-  private fun isUsedAsOption(
-    markSet: MarkSet,
-    enclosingType: ProtoType,
-    service: Service
-  ): Boolean {
-    if (service.type() !in markSet) return false
-
-    val protoMember = ProtoMember.get(enclosingType, if (isExtension) qualifiedName else name)
-    if (service.options().assignsMember(protoMember)) return true
-    if (service.rpcs().any { it.options.assignsMember(protoMember) }) return true
-
-    return false
-  }
-
-  private fun isUsedAsOption(markSet: MarkSet, enclosingType: ProtoType, type: Type): Boolean {
-    if (type.type !in markSet) return false
-
-    val protoMember = ProtoMember.get(enclosingType, if (isExtension) qualifiedName else name)
-
-    when (type) {
-      is MessageType -> {
-        if (type.options.assignsMember(protoMember)) return true
-        if (type.fields().any { it.options.assignsMember(protoMember) }) return true
-      }
-      is EnumType -> {
-        if (type.options.assignsMember(protoMember)) return true
-        if (type.constants.any { it.options.assignsMember(protoMember) }) return true
-      }
-    }
-
-    if (type.nestedTypes.any { isUsedAsOption(markSet, enclosingType, it) }) return true
-
-    return false
   }
 
   override fun toString() = name
@@ -266,7 +235,8 @@ class Field private constructor(
           elementType = it.type,
           options = Options(FIELD_OPTIONS, it.options),
           isExtension = extension,
-          isOneOf = oneOf
+          isOneOf = oneOf,
+          declaredJsonName = it.jsonName,
       )
     }
 
@@ -278,6 +248,7 @@ class Field private constructor(
           type = it.elementType,
           name = it.name,
           defaultValue = it.default,
+          jsonName = it.declaredJsonName,
           tag = it.tag,
           documentation = it.documentation,
           options = it.options.elements

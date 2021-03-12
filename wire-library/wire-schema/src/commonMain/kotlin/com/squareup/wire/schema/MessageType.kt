@@ -15,6 +15,7 @@
  */
 package com.squareup.wire.schema
 
+import com.squareup.wire.Syntax
 import com.squareup.wire.schema.Extensions.Companion.fromElements
 import com.squareup.wire.schema.Extensions.Companion.toElements
 import com.squareup.wire.schema.Field.Companion.fromElements
@@ -26,9 +27,10 @@ import com.squareup.wire.schema.OneOf.Companion.toElements
 import com.squareup.wire.schema.Reserved.Companion.fromElements
 import com.squareup.wire.schema.Reserved.Companion.toElements
 import com.squareup.wire.schema.internal.parser.MessageElement
+import kotlin.jvm.JvmName
 import kotlin.jvm.JvmStatic
 
-class MessageType private constructor(
+data class MessageType(
   override val type: ProtoType,
   override val location: Location,
   override val documentation: String,
@@ -39,9 +41,11 @@ class MessageType private constructor(
   override val nestedTypes: List<Type>,
   private val extensionsList: List<Extensions>,
   private val reserveds: List<Reserved>,
-  override val options: Options
+  override val options: Options,
+  override val syntax: Syntax
 ) : Type() {
-  fun fields() = declaredFields + extensionFields
+  @get:JvmName("fields")
+  val fields get() = declaredFields + extensionFields
 
   val requiredFields: List<Field>
     get() = fieldsAndOneOfFields.filter { it.isRequired }
@@ -106,29 +110,23 @@ class MessageType private constructor(
     for (field in declaredFields) {
       field.link(linker)
     }
-    for (field in extensionFields) {
-      field.link(linker)
-    }
     for (oneOf in oneOfs) {
       oneOf.link(linker)
     }
   }
 
-  override fun linkOptions(linker: Linker, syntaxRules: SyntaxRules) {
+  override fun linkOptions(linker: Linker, syntaxRules: SyntaxRules, validate: Boolean) {
     val linker = linker.withContext(this)
     for (nestedType in nestedTypes) {
-      nestedType.linkOptions(linker, syntaxRules)
+      nestedType.linkOptions(linker, syntaxRules, validate)
     }
     for (field in declaredFields) {
-      field.linkOptions(linker, syntaxRules)
-    }
-    for (field in extensionFields) {
-      field.linkOptions(linker, syntaxRules)
+      field.linkOptions(linker, syntaxRules, validate)
     }
     for (oneOf in oneOfs) {
-      oneOf.linkOptions(linker, syntaxRules)
+      oneOf.linkOptions(linker, syntaxRules, validate)
     }
-    options.link(linker)
+    options.link(linker, location, validate)
   }
 
   override fun validate(linker: Linker, syntaxRules: SyntaxRules) {
@@ -156,7 +154,7 @@ class MessageType private constructor(
         // This type is not retained, and none of its nested types are retained, prune it.
         retainedNestedTypes.isEmpty() -> null
         // This type is not retained but retained nested types, replace it with an enclosing type.
-        else -> EnclosingType(location, type, documentation, retainedNestedTypes)
+        else -> EnclosingType(location, type, documentation, retainedNestedTypes, syntax)
       }
     }
 
@@ -173,7 +171,8 @@ class MessageType private constructor(
         nestedTypes = retainedNestedTypes,
         extensionsList = extensionsList,
         reserveds = reserveds,
-        options = options.retainAll(schema, markSet)
+        options = options.retainAll(schema, markSet),
+        syntax = syntax
     )
   }
 
@@ -185,7 +184,7 @@ class MessageType private constructor(
         // This type is not retained, and none of its nested types are retained, prune it.
         retainedNestedTypes.isEmpty() -> null
         // This type is not retained but retained nested types, replace it with an enclosing type.
-        else -> EnclosingType(location, type, documentation, retainedNestedTypes)
+        else -> EnclosingType(location, type, documentation, retainedNestedTypes, syntax)
       }
     }
 
@@ -203,7 +202,8 @@ class MessageType private constructor(
         nestedTypes = retainedNestedTypes,
         extensionsList = emptyList(),
         reserveds = emptyList(),
-        options = options.retainLinked()
+        options = options.retainLinked(),
+        syntax = syntax
     )
   }
 
@@ -226,13 +226,14 @@ class MessageType private constructor(
     @JvmStatic fun fromElement(
       packageName: String?,
       protoType: ProtoType,
-      messageElement: MessageElement
+      messageElement: MessageElement,
+      syntax: Syntax
     ): MessageType {
       check(messageElement.groups.isEmpty()) {
         "${messageElement.groups[0].location}: 'group' is not supported"
       }
       val nestedTypes =
-          messageElement.nestedTypes.map { Type[packageName, protoType.nestedType(it.name), it] }
+          messageElement.nestedTypes.map { get(packageName, protoType.nestedType(it.name), it, syntax) }
       return MessageType(
           type = protoType,
           location = messageElement.location,
@@ -245,7 +246,8 @@ class MessageType private constructor(
           nestedTypes = nestedTypes,
           extensionsList = fromElements(messageElement.extensions),
           reserveds = fromElements(messageElement.reserveds),
-          options = Options(Options.MESSAGE_OPTIONS, messageElement.options)
+          options = Options(Options.MESSAGE_OPTIONS, messageElement.options),
+          syntax = syntax
       )
     }
   }

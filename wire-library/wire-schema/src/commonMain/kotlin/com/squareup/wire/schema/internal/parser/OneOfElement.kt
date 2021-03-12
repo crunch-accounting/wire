@@ -15,7 +15,6 @@
  */
 package com.squareup.wire.schema.internal.parser
 
-import com.squareup.wire.schema.SyntaxRules
 import com.squareup.wire.schema.internal.appendDocumentation
 import com.squareup.wire.schema.internal.appendIndented
 
@@ -23,22 +22,29 @@ data class OneOfElement(
   val name: String,
   val documentation: String = "",
   val fields: List<FieldElement> = emptyList(),
-  val groups: List<GroupElement> = emptyList()
+  val groups: List<GroupElement> = emptyList(),
+  val options: List<OptionElement> = emptyList(),
 ) {
-  fun toSchema(syntaxRules: SyntaxRules = SyntaxRules.get(syntax = null)) = buildString {
+  fun toSchema() = buildString {
     appendDocumentation(documentation)
     append("oneof $name {")
 
+    if (options.isNotEmpty()) {
+      append('\n')
+      for (option in options) {
+        appendIndented(option.toSchemaDeclaration())
+      }
+    }
     if (fields.isNotEmpty()) {
       append('\n')
       for (field in fields) {
-        appendIndented(field.toSchema(syntaxRules))
+        appendIndented(field.toSchema())
       }
     }
     if (groups.isNotEmpty()) {
       append('\n')
       for (group in groups) {
-        appendIndented(group.toSchema(syntaxRules))
+        appendIndented(group.toSchema())
       }
     }
     append("}\n")

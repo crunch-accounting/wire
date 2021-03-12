@@ -21,15 +21,16 @@ import com.squareup.javapoet.JavaFile
 import com.squareup.kotlinpoet.FileSpec
 import com.squareup.wire.ProtoAdapter
 import com.squareup.wire.java.JavaGenerator
+import com.squareup.wire.java.Profile
 import com.squareup.wire.kotlin.KotlinGenerator
 import com.squareup.wire.kotlin.RpcCallStyle
 import com.squareup.wire.kotlin.RpcRole
-import okio.buffer
-import okio.source
 import java.io.File
 import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
+import okio.buffer
+import okio.source
 
 /**
  * Builds a repository of `.proto` and `.wire` files to create schemas, profiles, and adapters for
@@ -38,7 +39,7 @@ import java.nio.file.Files
 class RepoBuilder {
   private val fs = Jimfs.newFileSystem(Configuration.unix())
   private val root = fs.getPath("/source")
-  private val schemaLoader = NewSchemaLoader(fs)
+  private val schemaLoader = SchemaLoader(fs)
   private var schema: Schema? = null
 
   fun add(name: String, protoFile: String): RepoBuilder {
@@ -71,6 +72,15 @@ class RepoBuilder {
   }
 
   @Throws(IOException::class)
+  fun addLocal(path: String): RepoBuilder {
+    val file = File(path)
+    file.source().use { source ->
+      val protoFile = source.buffer().readUtf8()
+      return add(path, protoFile)
+    }
+  }
+
+  @Throws(IOException::class)
   fun schema(): Schema {
     var result = schema
     if (result == null) {
@@ -82,7 +92,10 @@ class RepoBuilder {
   }
 
   @Throws(IOException::class)
-  fun profile(name: String) = schemaLoader.loadProfile(name, schema())
+  private fun profile(profileName: String?): Profile {
+    if (profileName == null) return Profile()
+    return schemaLoader.loadProfile(profileName, schema())
+  }
 
   @Throws(IOException::class)
   fun protoAdapter(messageTypeName: String): ProtoAdapter<Any> {
@@ -90,12 +103,10 @@ class RepoBuilder {
   }
 
   @Throws(IOException::class)
-  @JvmOverloads fun generateCode(typeName: String, profile: String? = null): String {
+  @JvmOverloads fun generateCode(typeName: String, profileName: String? = null): String {
     val schema = schema()
-    var javaGenerator = JavaGenerator.get(schema)
-    if (profile != null) {
-      javaGenerator = javaGenerator.withProfile(profile(profile))
-    }
+    val javaGenerator = JavaGenerator.get(schema)
+      .withProfile(profile(profileName))
     val type = schema.getType(typeName)
     val typeSpec = javaGenerator.generateType(type)
     val packageName = javaGenerator.generatedTypeName(type).packageName()
@@ -104,9 +115,17 @@ class RepoBuilder {
     return javaFile.toString()
   }
 
-  fun generateKotlin(typeName: String): String {
+  fun generateKotlin(
+    typeName: String,
+    emitKotlinSerialization: Boolean = false,
+    profileName: String? = null
+  ): String {
     val schema = schema()
-    val kotlinGenerator = KotlinGenerator(schema)
+    val kotlinGenerator = KotlinGenerator(
+        schema,
+        profile = profile(profileName),
+        emitKotlinSerialization = emitKotlinSerialization
+    )
     val type = schema.getType(typeName)!!
     val typeSpec = kotlinGenerator.generateType(type)
     val packageName = kotlinGenerator.generatedTypeName(type).packageName
@@ -121,11 +140,13 @@ class RepoBuilder {
     serviceName: String,
     rpcName: String? = null,
     rpcCallStyle: RpcCallStyle = RpcCallStyle.SUSPENDING,
-    rpcRole: RpcRole = RpcRole.CLIENT
+    rpcRole: RpcRole = RpcRole.CLIENT,
+    profileName: String? = null
   ): List<String> {
     val schema = schema()
     val grpcGenerator = KotlinGenerator(
         schema = schema,
+        profile = profile(profileName),
         emitAndroid = false,
         javaInterop = false,
         rpcCallStyle = rpcCallStyle,

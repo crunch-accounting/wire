@@ -60,12 +60,13 @@ class Options(
     }
   }
 
-  fun link(linker: Linker) {
+  fun link(linker: Linker, location: Location, validate: Boolean) {
     var entries: List<LinkedOptionEntry> = emptyList()
 
     for (option in optionElements) {
-      val canonicalOption: List<LinkedOptionEntry> = canonicalizeOption(linker, optionType, option)
-          ?: continue
+      val canonicalOption: List<LinkedOptionEntry> =
+          canonicalizeOption(linker, optionType, option, validate, location)
+              ?: continue
 
       entries = union(linker, entries, canonicalOption)
     }
@@ -75,7 +76,9 @@ class Options(
   private fun canonicalizeOption(
     linker: Linker,
     extensionType: ProtoType,
-    option: OptionElement
+    option: OptionElement,
+    validate: Boolean,
+    location: Location
   ): List<LinkedOptionEntry>? {
     val type = linker.getForOptions(extensionType) as? MessageType
         ?: return null // No known extensions for the given extension type.
@@ -90,16 +93,44 @@ class Options(
       // This is an option declared by an extension.
       val extensionsForType = type.extensionFieldsMap()
       path = resolveFieldPath(option.name, extensionsForType.keys)
-      val packageName = linker.packageName()
-      if (path == null && packageName != null) {
+      var packageName = linker.packageName()
+      var checkedExtensionFields = false
+      while (path == null && !packageName.isNullOrBlank()) {
         // If the path couldn't be resolved, attempt again by prefixing it with the package name.
         path = resolveFieldPath(packageName + "." + option.name, extensionsForType.keys)
+        // Retry with one upper level package to resolve relative paths.
+        if (path == null) {
+          packageName = packageName.substringBeforeLast(".", missingDelimiterValue = "")
+
+          if (packageName.isNullOrBlank() && !checkedExtensionFields) {
+            checkedExtensionFields = true
+            val extensionFields = type.extensionFields.filter { it.name == option.name }
+            if (extensionFields.size > 1) {
+              if (validate){
+                linker.errors += """
+                   |ambiguous options ${option.name} defined in
+                   |  ${extensionFields.map { "- ${it.location}" }.joinToString("\n  ")}
+                   """.trimMargin()
+                return null
+              }
+            } else {
+              packageName = extensionFields.firstOrNull()?.packageName
+            }
+          }
+        }
       }
       if (path == null) {
+        if (validate) {
+          linker.errors += "unable to resolve option ${option.name}"
+        }
         return null // Unable to find the root of this field path.
       }
       field = extensionsForType[path[0]]
+      if (validate) {
+        linker.withContext(field!!).validateImportForPath(location, field.location.path)
+      }
     }
+    linker.request(field!!)
 
     val result = mutableMapOf<ProtoMember, Any>()
     var last = result
@@ -116,6 +147,7 @@ class Options(
 
       last = nested
       field = linker.dereference(field, path[i]) ?: return null // Unable to dereference segment.
+      linker.request(field)
     }
 
     last[get(lastProtoType!!, field!!)] = canonicalizeValue(linker, field, option.value)
@@ -135,7 +167,7 @@ class Options(
         val result = mutableMapOf<ProtoMember, Any>()
         val field = linker.dereference(context, value.name)
         if (field == null) {
-          linker.addError("unable to resolve option ${value.name} on ${context.type}")
+          linker.errors += "unable to resolve option ${value.name} on ${context.type}"
         } else {
           val protoMember = get(context.type!!, field)
           result[protoMember] = canonicalizeValue(linker, field, value.value)
@@ -149,7 +181,7 @@ class Options(
           val name = entry.key as String
           val field = linker.dereference(context, name)
           if (field == null) {
-            linker.addError("unable to resolve option $name on ${context.type}")
+            linker.errors += "unable to resolve option $name on ${context.type}"
           } else {
             val protoMember = get(context.type!!, field)
             result[protoMember] = canonicalizeValue(linker, field, entry.value!!)
@@ -195,7 +227,7 @@ class Options(
       }
 
       else -> {
-        linker.addError("conflicting options: $a, $b")
+        linker.errors += "conflicting options: $a, $b"
         a // Just return any placeholder.
       }
     }

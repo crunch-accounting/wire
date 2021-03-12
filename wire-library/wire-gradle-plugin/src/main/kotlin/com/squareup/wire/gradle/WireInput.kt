@@ -17,16 +17,17 @@ package com.squareup.wire.gradle
 
 import com.squareup.wire.gradle.WireExtension.ProtoRootSet
 import com.squareup.wire.schema.Location
+import java.io.File
+import java.net.URI
 import org.gradle.api.Project
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.artifacts.Dependency
+import org.gradle.api.artifacts.DependencySet
 import org.gradle.api.artifacts.FileCollectionDependency
 import org.gradle.api.file.SourceDirectorySet
 import org.gradle.api.internal.file.FileOrUriNotationConverter
 import org.gradle.api.logging.Logger
 import org.gradle.api.provider.Provider
-import java.io.File
-import java.net.URI
 
 /**
  * Builds Wire's inputs (expressed as [Location] lists) from Gradle's objects (expressed as
@@ -38,6 +39,9 @@ internal class WireInput(var configuration: Provider<Configuration>) {
     get() = configuration.get().name
 
   private val dependencyToIncludes = mutableMapOf<Dependency, List<String>>()
+
+  val dependencies: DependencySet
+    get() = configuration.get().dependencies
 
   fun addPaths(project: Project, paths: Set<String>) {
     for (path in paths) {
@@ -125,8 +129,7 @@ internal class WireInput(var configuration: Provider<Configuration>) {
 
   fun toLocations(): Provider<List<Location>> = configuration.map {
     it.dependencies.flatMap { dep ->
-      configuration.get()
-          .files(dep)
+      it.files(dep)
           .flatMap { file ->
             file.toLocations(dep)
           }
@@ -136,7 +139,7 @@ internal class WireInput(var configuration: Provider<Configuration>) {
   private fun File.toLocations(dependency: Dependency): List<Location> {
     if (dependency is FileCollectionDependency && dependency.files is SourceDirectorySet) {
       val srcDir = (dependency.files as SourceDirectorySet).srcDirs.first {
-        path.startsWith(it.path + "/")
+        path.startsWith(it.path + File.separator)
       }
       return listOf(Location.get(
           base = srcDir.path,

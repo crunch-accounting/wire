@@ -10,7 +10,7 @@ jar {
 dependencies {
   api project(':wire-schema')
   implementation project(':wire-runtime')
-  implementation deps.kotlin.stdlib.jdk8
+  implementation project(':wire-profiles')
   implementation deps.okio.jvm
   implementation deps.guava
   api deps.javapoet

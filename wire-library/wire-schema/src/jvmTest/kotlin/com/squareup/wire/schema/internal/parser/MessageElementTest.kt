@@ -19,7 +19,6 @@ import com.squareup.wire.schema.Field.Label.OPTIONAL
 import com.squareup.wire.schema.Field.Label.REPEATED
 import com.squareup.wire.schema.Field.Label.REQUIRED
 import com.squareup.wire.schema.Location
-import com.squareup.wire.schema.SyntaxRules.Companion.PROTO_3_SYNTAX_RULES
 import com.squareup.wire.schema.internal.parser.OptionElement.Kind
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
@@ -515,11 +514,13 @@ class MessageElementTest {
         |  option kit = "kat";
         |
         |  required string name = 1;
+        |
         |  required bool other_name = 2;
         |
         |  oneof thingy {
         |    string namey = 3;
         |  }
+        |
         |  oneof thinger {
         |    string namer = 4;
         |  }
@@ -560,20 +561,6 @@ class MessageElementTest {
     )
     val expected = "required string name = 1 [default = \"benoît\"];\n"
     assertThat(field.toSchema()).isEqualTo(expected)
-  }
-
-  @Test
-  fun defaultIsNotSetInProto3() {
-    val field = FieldElement(
-        location = location,
-        label = REQUIRED,
-        type = "string",
-        name = "name",
-        tag = 1,
-        defaultValue = "benoît"
-    )
-    val expected = "required string name = 1;\n"
-    assertThat(field.toSchema(PROTO_3_SYNTAX_RULES)).isEqualTo(expected)
   }
 
   @Test
@@ -667,5 +654,36 @@ class MessageElementTest {
         |];
         |""".trimMargin()
     assertThat(field.toSchema()).isEqualTo(expected)
+  }
+
+  @Test fun oneOfWithOptions() {
+    val expected = """
+        |oneof page_info {
+        |  option (my_option) = true;
+        |
+        |  int32 page_number = 2;
+        |  int32 result_per_page = 3;
+        |}
+        |""".trimMargin()
+    val oneOf = OneOfElement(
+        name = "page_info",
+        fields = listOf(
+            FieldElement(
+                location = location.at(4, 5),
+                type = "int32",
+                name = "page_number",
+                tag = 2
+            ),
+            FieldElement(
+                location = location.at(5, 5),
+                type = "int32",
+                name = "result_per_page",
+                tag = 3
+            )
+        ),
+        options = listOf(
+            OptionElement.create("my_option", Kind.BOOLEAN, "true", true))
+    )
+    assertThat(oneOf.toSchema()).isEqualTo(expected)
   }
 }

@@ -20,7 +20,7 @@ jobs:
           - 12
           - 13
           - 14
-          - 15-ea
+          - 15
 
     steps:
       - name: Checkout
@@ -41,7 +41,7 @@ jobs:
 
       - name: Test
         run: |
-          ./gradlew -p wire-library -Dkjs=false -Dknative=false build
+          ./gradlew -p wire-library -Dkjs=false -Dknative=false build -Pswift=false
           ./gradlew build
 
   multiplatform:
@@ -67,7 +67,11 @@ jobs:
       - name: Install Chrome
         run: |
           brew update
-          brew cask install google-chrome
+          brew install google-chrome
+
+      # See https://github.com/square/wire/issues/1875
+      - name: Use Xcode 12.0 for swift tests
+        run: sudo xcode-select -switch "/Applications/Xcode_12.app"
 
       - name: Test
         run: |
@@ -89,10 +93,7 @@ jobs:
           java-version: 14
 
       - name: Upload Artifacts
-        run: |
-          cd wire-library
-          ../gradlew clean uploadArchives publish
-          cd ..
+        run: ./gradlew -p wire-library clean uploadArchives publish
         env:
           ORG_GRADLE_PROJECT_SONATYPE_NEXUS_USERNAME: ${{ secrets.SONATYPE_NEXUS_USERNAME }}
           ORG_GRADLE_PROJECT_SONATYPE_NEXUS_PASSWORD: ${{ secrets.SONATYPE_NEXUS_PASSWORD }}

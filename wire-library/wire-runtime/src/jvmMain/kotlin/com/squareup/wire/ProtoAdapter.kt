@@ -30,7 +30,9 @@ import kotlin.reflect.KClass
 actual abstract class ProtoAdapter<E> actual constructor(
   internal actual val fieldEncoding: FieldEncoding,
   actual val type: KClass<*>?,
-  actual val typeUrl: String?
+  actual val typeUrl: String?,
+  actual val syntax: Syntax,
+  actual val identity: E?
 ) {
   internal actual val packedAdapter: ProtoAdapter<List<E>>? = when {
     this is PackedProtoAdapter<*> || this is RepeatedProtoAdapter<*> -> null
@@ -45,11 +47,33 @@ actual abstract class ProtoAdapter<E> actual constructor(
   // Obsolete; for Java classes generated before typeUrl was added.
   constructor(fieldEncoding: FieldEncoding, type: Class<*>) : this(fieldEncoding, type.kotlin)
 
-  // Obsolete; for Kotlin classes generated before typeUrl was added.
-  constructor(fieldEncoding: FieldEncoding, type: KClass<*>?) : this(fieldEncoding, type, null)
-
+  // Obsolete; for Java classes generated before syntax was added.
   constructor(fieldEncoding: FieldEncoding, type: Class<*>, typeUrl: String?) :
-      this(fieldEncoding, type.kotlin, typeUrl)
+      this(fieldEncoding, type.kotlin, typeUrl, Syntax.PROTO_2)
+
+  // Obsolete; for Java classes generated before identity was added.
+  constructor(fieldEncoding: FieldEncoding, type: Class<*>, typeUrl: String?, syntax: Syntax) :
+      this(fieldEncoding, type.kotlin, typeUrl, syntax)
+
+  // Obsolete; for Kotlin classes generated before typeUrl was added.
+  constructor(fieldEncoding: FieldEncoding, type: KClass<*>?) :
+      this(fieldEncoding, type, null, Syntax.PROTO_2)
+
+  // Obsolete; for Kotlin classes generated before syntax was added.
+  constructor(fieldEncoding: FieldEncoding, type: KClass<*>?, typeUrl: String?) :
+      this(fieldEncoding, type, typeUrl, Syntax.PROTO_2)
+
+  // Obsolete; for Kotlin classes generated before identity was added.
+  constructor(fieldEncoding: FieldEncoding, type: KClass<*>?, typeUrl: String?, syntax: Syntax) :
+      this(fieldEncoding, type, typeUrl, syntax, null)
+
+  constructor(
+    fieldEncoding: FieldEncoding,
+    type: Class<*>,
+    typeUrl: String?,
+    syntax: Syntax,
+    identity: E?
+  ) : this(fieldEncoding, type.kotlin, typeUrl, syntax, identity)
 
   actual abstract fun redact(value: E): E
 
@@ -129,11 +153,14 @@ actual abstract class ProtoAdapter<E> actual constructor(
         "Can't create a repeated adapter from a repeated or packed adapter.")
   }
 
+  internal val isStruct: Boolean
+    get() = this == STRUCT_MAP || this == STRUCT_LIST || this == STRUCT_VALUE || this == STRUCT_NULL
+
   actual class EnumConstantNotFoundException actual constructor(
     @JvmField actual val value: Int,
     type: KClass<*>?
   ) : IllegalArgumentException("Unknown enum tag $value for ${type?.java?.name}") {
-    constructor(value: Int, type: Class<*>): this(value, type.kotlin)
+    constructor(value: Int, type: Class<*>) : this(value, type.kotlin)
   }
 
   actual companion object {
@@ -144,19 +171,28 @@ actual abstract class ProtoAdapter<E> actual constructor(
       return commonNewMapAdapter(keyAdapter, valueAdapter)
     }
 
-    /** Creates a new proto adapter for `type`. */
+    // Obsolete; for Java classes generated before typeUrl and syntax were added.
     @JvmStatic fun <M : Message<M, B>, B : Message.Builder<M, B>> newMessageAdapter(
       type: Class<M>
     ): ProtoAdapter<M> {
-      return RuntimeMessageAdapter.create(type, null)
+      return RuntimeMessageAdapter.create(type, null, Syntax.PROTO_2)
+    }
+
+    // Obsolete; for Java classes generated before typeUrl and syntax were added.
+    @JvmStatic fun <M : Message<M, B>, B : Message.Builder<M, B>> newMessageAdapter(
+      type: Class<M>,
+      typeUrl: String
+    ): ProtoAdapter<M> {
+      return RuntimeMessageAdapter.create(type, typeUrl, Syntax.PROTO_2)
     }
 
     /** Creates a new proto adapter for `type`. */
     @JvmStatic fun <M : Message<M, B>, B : Message.Builder<M, B>> newMessageAdapter(
       type: Class<M>,
-      typeUrl: String
+      typeUrl: String,
+      syntax: Syntax
     ): ProtoAdapter<M> {
-      return RuntimeMessageAdapter.create(type, typeUrl)
+      return RuntimeMessageAdapter.create(type, typeUrl, syntax)
     }
 
     /** Creates a new proto adapter for `type`. */
@@ -215,10 +251,46 @@ actual abstract class ProtoAdapter<E> actual constructor(
     @JvmField actual val DOUBLE: ProtoAdapter<Double> = commonDouble()
     @JvmField actual val BYTES: ProtoAdapter<ByteString> = commonBytes()
     @JvmField actual val STRING: ProtoAdapter<String> = commonString()
-    @JvmField actual val DURATION: ProtoAdapter<Duration> = commonDuration()
-    @JvmField actual val STRUCT_MAP: ProtoAdapter<Map<String, *>> = commonStructMap()
-    @JvmField actual val STRUCT_LIST: ProtoAdapter<List<*>> = commonStructList()
+    @JvmField actual val EMPTY: ProtoAdapter<Unit> = commonEmpty()
+    @JvmField actual val STRUCT_MAP: ProtoAdapter<Map<String, *>?> = commonStructMap()
+    @JvmField actual val STRUCT_LIST: ProtoAdapter<List<*>?> = commonStructList()
     @JvmField actual val STRUCT_NULL: ProtoAdapter<Nothing?> = commonStructNull()
     @JvmField actual val STRUCT_VALUE: ProtoAdapter<Any?> = commonStructValue()
+    @JvmField actual val DOUBLE_VALUE: ProtoAdapter<Double?> = commonWrapper(DOUBLE, "type.googleapis.com/google.protobuf.DoubleValue")
+    @JvmField actual val FLOAT_VALUE: ProtoAdapter<Float?> = commonWrapper(FLOAT, "type.googleapis.com/google.protobuf.FloatValue")
+    @JvmField actual val INT64_VALUE: ProtoAdapter<Long?> = commonWrapper(INT64, "type.googleapis.com/google.protobuf.Int64Value")
+    @JvmField actual val UINT64_VALUE: ProtoAdapter<Long?> = commonWrapper(UINT64, "type.googleapis.com/google.protobuf.UInt64Value")
+    @JvmField actual val INT32_VALUE: ProtoAdapter<Int?> = commonWrapper(INT32, "type.googleapis.com/google.protobuf.Int32Value")
+    @JvmField actual val UINT32_VALUE: ProtoAdapter<Int?> = commonWrapper(UINT32, "type.googleapis.com/google.protobuf.UInt32Value")
+    @JvmField actual val BOOL_VALUE: ProtoAdapter<Boolean?> = commonWrapper(BOOL, "type.googleapis.com/google.protobuf.BoolValue")
+    @JvmField actual val STRING_VALUE: ProtoAdapter<String?> = commonWrapper(STRING, "type.googleapis.com/google.protobuf.StringValue")
+    @JvmField actual val BYTES_VALUE: ProtoAdapter<ByteString?> = commonWrapper(BYTES, "type.googleapis.com/google.protobuf.BytesValue")
+    @JvmField actual val DURATION: ProtoAdapter<Duration> = try {
+      commonDuration()
+    } catch (_: NoClassDefFoundError) {
+      UnsupportedTypeProtoAdapter() as ProtoAdapter<Duration>
+    }
+    @JvmField actual val INSTANT: ProtoAdapter<Instant> = try {
+      commonInstant()
+    } catch (_: NoClassDefFoundError) {
+      UnsupportedTypeProtoAdapter() as ProtoAdapter<Instant>
+    }
+
+    /**
+     * Stub [ProtoAdapter] for Wire types which are typeliased to `java.time` types on the JVM
+     * such as [Duration] and [Instant]. This proto adapter is used when the corresponding
+     * `java.time` type is missing from the JVM classpath.
+     */
+    class UnsupportedTypeProtoAdapter : ProtoAdapter<Nothing>(FieldEncoding.LENGTH_DELIMITED,
+        Nothing::class) {
+      override fun redact(value: Nothing) =
+          throw IllegalStateException("Operation not supported.")
+      override fun encodedSize(value: Nothing) =
+          throw IllegalStateException("Operation not supported.")
+      override fun encode(writer: ProtoWriter, value: Nothing) =
+          throw IllegalStateException("Operation not supported.")
+      override fun decode(reader: ProtoReader): Nothing =
+          throw IllegalStateException("Operation not supported.")
+    }
   }
 }

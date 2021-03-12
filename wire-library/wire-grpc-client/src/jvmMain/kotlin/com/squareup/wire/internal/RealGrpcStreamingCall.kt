@@ -20,18 +20,22 @@ import com.squareup.wire.GrpcMethod
 import com.squareup.wire.GrpcStreamingCall
 import com.squareup.wire.MessageSink
 import com.squareup.wire.MessageSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.launch
 import okio.Timeout
 import java.util.concurrent.TimeUnit
 
 internal class RealGrpcStreamingCall<S : Any, R : Any>(
   private val grpcClient: GrpcClient,
-  private val grpcMethod: GrpcMethod<S, R>
+  override val method: GrpcMethod<S, R>
 ) : GrpcStreamingCall<S, R> {
   private val requestBody = newDuplexRequestBody()
-  private val call = grpcClient.newCall(grpcMethod.path, requestBody)
+  private val call = grpcClient.newCall(method, requestBody)
 
   override val timeout: Timeout
     get() = call.timeout()
@@ -47,11 +51,11 @@ internal class RealGrpcStreamingCall<S : Any, R : Any>(
 
   override fun isCanceled(): Boolean = call.isCanceled()
 
-  override fun execute(): Pair<SendChannel<S>, ReceiveChannel<R>> {
+  override fun execute(): Pair<SendChannel<S>, ReceiveChannel<R>> = executeIn(GlobalScope)
+
+  override fun executeIn(scope: CoroutineScope): Pair<SendChannel<S>, ReceiveChannel<R>> {
     val requestChannel = Channel<S>(1)
     val responseChannel = Channel<R>(1)
-    requestChannel.writeToRequestBody(requestBody, grpcMethod.requestAdapter, call)
-    call.enqueue(responseChannel.readFromResponseBodyCallback(grpcMethod.responseAdapter))
 
     responseChannel.invokeOnClose {
       if (responseChannel.isClosedForReceive) {
@@ -61,12 +65,17 @@ internal class RealGrpcStreamingCall<S : Any, R : Any>(
       }
     }
 
+    scope.launch(Dispatchers.IO) {
+      requestChannel.writeToRequestBody(requestBody, method.requestAdapter, call)
+    }
+    call.enqueue(responseChannel.readFromResponseBodyCallback(method.responseAdapter))
+
     return requestChannel to responseChannel
   }
 
   override fun executeBlocking(): Pair<MessageSink<S>, MessageSource<R>> {
-    val messageSource = BlockingMessageSource(grpcMethod.responseAdapter, call)
-    val messageSink = requestBody.messageSink(grpcMethod.requestAdapter, call)
+    val messageSource = BlockingMessageSource(method.responseAdapter, call)
+    val messageSink = requestBody.messageSink(method.requestAdapter, call)
     call.enqueue(messageSource.readFromResponseBodyCallback())
 
     return messageSink to messageSource
@@ -75,7 +84,7 @@ internal class RealGrpcStreamingCall<S : Any, R : Any>(
   override fun isExecuted(): Boolean = call.isExecuted()
 
   override fun clone(): GrpcStreamingCall<S, R> {
-    val result = RealGrpcStreamingCall(grpcClient, grpcMethod)
+    val result = RealGrpcStreamingCall(grpcClient, method)
     val oldTimeout = this.timeout
     result.timeout.also { newTimeout ->
       newTimeout.timeout(oldTimeout.timeoutNanos(), TimeUnit.NANOSECONDS)

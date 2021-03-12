@@ -39,7 +39,7 @@ nav:
   - 'Overview': index.md
   - 'Gradle Plugin': wire_compiler.md
   - 'gRPC': wire_grpc.md
-  - 'Stack Overflow ⏏': https://stackoverflow.com/questions/tagged/wire?sort=active
+  - 'Stack Overflow ⏏': https://stackoverflow.com/questions/tagged/square-wire?sort=active
   - '3.x API':
     - 'wire-grpc-client': 3.x/wire-grpc-client/com.squareup.wire/index.md
     - 'wire-moshi-adapter': 3.x/wire-moshi-adapter/com.squareup.wire/index.md
@@ -47,6 +47,8 @@ nav:
   - '2.x API':
     - 'wire-gson-support ⏏': https://square.github.io/wire/2.x/wire-gson-support/
     - 'wire-runtime ⏏': https://square.github.io/wire/2.x/wire-runtime/
+  - 'JSON': wire_json.md
+  - 'Wire vs Protoc': wire_vs_protoc.md
   - 'Change Log': changelog.md
   - 'Contributing': contributing.md
   - 'Code of Conduct': code_of_conduct.md

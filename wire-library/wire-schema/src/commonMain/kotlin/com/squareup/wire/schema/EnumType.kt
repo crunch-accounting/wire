@@ -15,17 +15,19 @@
  */
 package com.squareup.wire.schema
 
+import com.squareup.wire.Syntax
 import com.squareup.wire.schema.Options.Companion.ENUM_OPTIONS
 import com.squareup.wire.schema.internal.parser.EnumElement
 import kotlin.jvm.JvmStatic
 
-class EnumType private constructor(
+data class EnumType(
   override val type: ProtoType,
   override val location: Location,
   override val documentation: String,
   private val name: String,
   val constants: List<EnumConstant>,
-  override val options: Options
+  override val options: Options,
+  override val syntax: Syntax
 ) : Type() {
   private var allowAlias: Any? = null
 
@@ -42,10 +44,11 @@ class EnumType private constructor(
 
   override fun linkMembers(linker: Linker) {}
 
-  override fun linkOptions(linker: Linker, syntaxRules: SyntaxRules) {
-    options.link(linker)
+  override fun linkOptions(linker: Linker, syntaxRules: SyntaxRules, validate: Boolean) {
+    val linker = linker.withContext(this)
+    options.link(linker, location, validate = validate)
     for (constant in constants) {
-      constant.linkOptions(linker)
+      constant.linkOptions(linker, validate)
     }
     allowAlias = options.get(ALLOW_ALIAS)
   }
@@ -56,14 +59,34 @@ class EnumType private constructor(
     if ("true" != allowAlias) {
       validateTagUniqueness(linker)
     }
-    if (syntaxRules.enumRequiresZeroValueAtFirstPosition()) {
-      validateZeroValueAtFirstPosition(linker)
-    }
+    validateTagNameAmbiguity("true" == allowAlias, linker)
+    syntaxRules.validateEnumConstants(constants, linker.errors)
   }
 
-  private fun validateZeroValueAtFirstPosition(linker: Linker) {
-    if (constants.isEmpty() || constants.first().tag != 0) {
-      linker.addError("missing a zero value at the first element [proto3]")
+  private fun validateTagNameAmbiguity(allowAlias: Boolean, linker: Linker) {
+    val nameToConstants: Map<String, List<EnumConstant>> =
+        constants.groupBy {
+          buildString(it.name.length) {
+            for (char in it.name) {
+              if (char in 'A'..'Z') append(char - ('A' - 'a'))
+              else append(char)
+            }
+          }
+        }
+
+    for ((_, constants) in nameToConstants) {
+      if (constants.size > 1) {
+        if (allowAlias && constants.groupBy { it.tag }.size == 1) continue
+
+        val error = buildString {
+          append("Ambiguous constant names (if you are using allow_alias, use the same value for " +
+              "these constants):")
+          constants.forEach { it ->
+            append("\n  ${it.name}:${it.tag} (${it.location})")
+          }
+        }
+        linker.errors += error
+      }
     }
   }
 
@@ -83,7 +106,7 @@ class EnumType private constructor(
             append("\n  ${index + 1}. ${it.name} (${it.location})")
           }
         }
-        linker.addError(error)
+        linker.errors += error
       }
     }
   }
@@ -102,7 +125,8 @@ class EnumType private constructor(
         documentation = documentation,
         name = name,
         constants = retainedConstants,
-        options = options.retainAll(schema, markSet)
+        options = options.retainAll(schema, markSet),
+        syntax = syntax
     )
     result.allowAlias = allowAlias
     return result
@@ -121,7 +145,8 @@ class EnumType private constructor(
         documentation = documentation,
         name = name,
         constants = retainedConstants,
-        options = options.retainLinked()
+        options = options.retainLinked(),
+        syntax = syntax
     )
   }
 
@@ -141,16 +166,17 @@ class EnumType private constructor(
     @JvmStatic
     fun fromElement(
       protoType: ProtoType,
-      enumElement: EnumElement
+      enumElement: EnumElement,
+      syntax: Syntax
     ): EnumType {
-
       return EnumType(
           type = protoType,
           location = enumElement.location,
           documentation = enumElement.documentation,
           name = enumElement.name,
           constants = EnumConstant.fromElements(enumElement.constants),
-          options = Options(ENUM_OPTIONS, enumElement.options)
+          options = Options(ENUM_OPTIONS, enumElement.options),
+          syntax = syntax
       )
     }
   }

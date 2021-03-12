@@ -3,17 +3,20 @@ package com.squareup.wire.gradle
 import org.assertj.core.api.Assertions.assertThat
 import org.gradle.testkit.runner.BuildResult
 import org.gradle.testkit.runner.GradleRunner
+import org.gradle.testkit.runner.TaskOutcome
 import org.junit.After
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.io.IOException
+import java.util.zip.ZipFile
 import kotlin.text.RegexOption.DOT_MATCHES_ALL
 import kotlin.text.RegexOption.MULTILINE
 
 class WirePluginTest {
   private lateinit var gradleRunner: GradleRunner
+
   @Before
   fun setUp() {
     gradleRunner = GradleRunner.create()
@@ -34,9 +37,7 @@ class WirePluginTest {
     val result = gradleRunner.runFixture(fixtureRoot) { buildAndFail() }
 
     assertThat(result.task(":generateProtos")).isNull()
-    assertThat(result.output).contains(
-        """Either the Java or Kotlin plugin must be applied before the Wire Gradle plugin."""
-    )
+    assertThat(result.output).contains("Missing either the Java, Kotlin, or Android plugin")
   }
 
   @Test
@@ -83,7 +84,7 @@ class WirePluginTest {
 
     val result = gradleRunner.runFixture(fixtureRoot) { buildAndFail() }
 
-    val task = result.task(":generateProtos")
+    val task = result.task(":generateMainProtos")
     assertThat(task).isNotNull
     assertThat(result.output).contains("no sources")
   }
@@ -319,7 +320,8 @@ class WirePluginTest {
 
     assertThat(result.task(":generateProtos")).isNull()
     assertThat(result.output)
-        .contains("To generate Kotlin protos, please apply a Kotlin plugin.")
+        .contains(
+            "Wire Gradle plugin applied in project ':' but no supported Kotlin plugin was found")
   }
 
   @Test
@@ -439,7 +441,7 @@ class WirePluginTest {
       withArguments("run", "--stacktrace").build()
     }
 
-    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.task(":generateMainProtos")).isNotNull
     assertThat(result.output)
         .contains("Writing com.squareup.dinosaurs.Dinosaur")
         .contains("Writing com.squareup.geology.Period")
@@ -461,7 +463,7 @@ class WirePluginTest {
       withArguments("run", "--stacktrace").build()
     }
 
-    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.task(":generateMainProtos")).isNotNull
     assertThat(result.output)
         .contains("Writing com.squareup.dinosaurs.Dinosaur")
         .contains("Writing com.squareup.geology.Period")
@@ -483,7 +485,7 @@ class WirePluginTest {
       withArguments("run", "--stacktrace").build()
     }
 
-    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.task(":generateMainProtos")).isNotNull
     assertThat(result.output)
         .contains("Writing com.squareup.dinosaurs.Dinosaur")
         .contains("Writing com.squareup.geology.Period")
@@ -505,7 +507,7 @@ class WirePluginTest {
       withArguments("run", "--stacktrace").build()
     }
 
-    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.task(":generateMainProtos")).isNotNull
     assertThat(result.output)
         .contains("Writing com.squareup.dinosaurs.Dinosaur")
         .contains("Writing com.squareup.geology.Period")
@@ -517,6 +519,33 @@ class WirePluginTest {
         File(fixtureRoot, "build/generated/source/wire/com/squareup/geology/Period.kt")
     assertThat(generatedProto1).exists()
     assertThat(generatedProto2).exists()
+  }
+
+  @Test
+  fun sourceDirInclude() {
+    val fixtureRoot = File("src/test/projects/sourcedir-include")
+
+    val result = gradleRunner.runFixture(fixtureRoot) {
+      withArguments("run", "--stacktrace").build()
+    }
+
+    assertThat(result.task(":generateMainProtos")).isNotNull
+    assertThat(result.output)
+      .contains("Writing com.squareup.dinosaurs.Dinosaur")
+      .contains("Writing com.squareup.geology.Period")
+      .contains("src/test/projects/sourcedir-include/build/generated/source/wire")
+    assertThat(result.output)
+      .doesNotContain("Writing com.excluded.Martian")
+
+    val includedFile1 =
+      File(fixtureRoot, "build/generated/source/wire/com/squareup/dinosaurs/Dinosaur.kt")
+    val includedFile2 =
+      File(fixtureRoot, "build/generated/source/wire/com/squareup/geology/Period.kt")
+    assertThat(includedFile1).exists()
+    assertThat(includedFile2).exists()
+    val excludedFile =
+      File(fixtureRoot, "build/generated/source/wire/com/excluded/Martian.kt")
+    assertThat(excludedFile).doesNotExist()
   }
 
   @Test
@@ -655,7 +684,7 @@ class WirePluginTest {
 
     val result = gradleRunner.runFixture(fixtureRoot) { build() }
 
-    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.task(":generateMainProtos")).isNotNull
     assertThat(result.task(":helloWorld")).isNotNull
     assertThat(result.output)
         .contains("Writing com.squareup.dinosaurs.Dig")
@@ -722,7 +751,8 @@ class WirePluginTest {
       ).build()
     }
 
-    assertThat(result.task(":generateProtos")).isNotNull
+    println(result.tasks.joinToString { it.toString() })
+    assertThat(result.task(":generateJvmMainProtos")).isNotNull
     assertThat(result.output)
         .contains("Writing com.squareup.dinosaurs.Dinosaur")
         .contains("Writing com.squareup.geology.Period")
@@ -799,17 +829,110 @@ class WirePluginTest {
     val fixtureRoot = File("src/test/projects/consecutive-runs")
 
     val firstRun = gradleRunner.runFixture(fixtureRoot) { build() }
-
-    assertThat(firstRun.task(":generateProtos")).isNotNull
+    assertThat(firstRun.task(":generateMainProtos")).isNotNull
     assertThat(firstRun.output)
         .contains("Writing com.squareup.geology.Period")
         .contains("src/test/projects/consecutive-runs/custom")
 
     val secondRun = gradleRunner.runFixture(fixtureRoot) { build() }
-
-    assertThat(secondRun.task(":generateProtos")).isNotNull
+    assertThat(secondRun.task(":generateMainProtos")).isNotNull
     assertThat(secondRun.output)
-        .contains("Task :generateProtos UP-TO-DATE")
+        .contains("Task :generateMainProtos UP-TO-DATE")
+  }
+
+  @Test
+  fun moveMessage() {
+    val fixtureRoot = File("src/test/projects/move-message")
+
+    val result = gradleRunner.runFixture(fixtureRoot) { build() }
+
+    val task = result.task(":generateProtos")
+    assertThat(task).isNotNull
+    assertThat(result.output)
+        .contains("Writing squareup/dinosaurs/dinosaur.proto")
+        .contains("Writing squareup/geology/geology.proto")
+
+    val outputRoot = File(fixtureRoot, "build/generated/source/wire")
+
+    val dinosaurProto = File(outputRoot, "squareup/dinosaurs/dinosaur.proto").readText()
+    assertThat(dinosaurProto).contains("import \"squareup/geology/geology.proto\";")
+
+    val geologyProto = File(outputRoot, "squareup/geology/geology.proto").readText()
+    assertThat(geologyProto).contains("enum Period {")
+  }
+
+  @Test
+  fun emitJavaOptions() {
+    val fixtureRoot = File("src/test/projects/emit-java-options")
+
+    val result = gradleRunner.runFixture(fixtureRoot) { build() }
+
+    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.output).contains("Writing squareup.options.DocumentationUrlOption")
+
+    val generatedProto = File(
+        fixtureRoot, "build/generated/source/wire/squareup/polygons/Octagon.java")
+    val octagon = generatedProto.readText()
+    assertThat(octagon)
+        .contains("""@DocumentationUrlOption("https://en.wikipedia.org/wiki/Octagon")""")
+  }
+
+  @Test
+  fun emitKotlinOptions() {
+    val fixtureRoot = File("src/test/projects/emit-kotlin-options")
+
+    val result = gradleRunner.runFixture(fixtureRoot) { build() }
+
+    assertThat(result.task(":generateProtos")).isNotNull
+    assertThat(result.output).contains("Writing squareup.options.DocumentationUrlOption")
+
+    val generatedProto = File(
+        fixtureRoot, "build/generated/source/wire/squareup/polygons/Octagon.kt")
+    val octagon = generatedProto.readText()
+    assertThat(octagon)
+        .contains("""@DocumentationUrlOption("https://en.wikipedia.org/wiki/Octagon")""")
+  }
+
+  @Test
+  fun packageCycles() {
+    val fixtureRoot = File("src/test/projects/package-cycles")
+
+    val result = gradleRunner.runFixture(fixtureRoot) { buildAndFail() }
+    assertThat(result.output).contains("packages form a cycle")
+  }
+
+  @Test
+  fun packageCyclesPermitted() {
+    val fixtureRoot = File("src/test/projects/package-cycles-permitted")
+
+    val result = gradleRunner.runFixture(fixtureRoot) { build() }
+    assertThat(result.output)
+        .contains("Writing people.Employee")
+        .contains("Writing people.OfficeManager")
+        .contains("Writing locations.Office")
+        .contains("Writing locations.Residence")
+  }
+
+  @Test
+  fun projectDependencies() {
+    val fixtureRoot = File("src/test/projects/project-dependencies")
+
+    val result = gradleRunner.runFixture(fixtureRoot) {
+      withArguments("generateMainProtos", "--stacktrace").build()
+    }
+
+    assertThat(result.task(":dinosaurs:generateMainProtos")?.outcome)
+      .isIn(TaskOutcome.SUCCESS, TaskOutcome.UP_TO_DATE)
+    val generatedProto1 = File(fixtureRoot,
+      "dinosaurs/build/generated/source/wire/com/squareup/dinosaurs/Dinosaur.kt")
+    val generatedProto2 = File(fixtureRoot,
+      "geology/build/generated/source/wire/com/squareup/geology/Period.kt")
+    assertThat(generatedProto1).exists()
+    assertThat(generatedProto2).exists()
+
+    ZipFile(File(fixtureRoot, "geology/build/libs/geology.jar")).use {
+      assertThat(it.getEntry("squareup/geology/period.proto")).isNotNull()
+    }
   }
 
   private fun GradleRunner.runFixture(

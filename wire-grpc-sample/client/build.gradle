@@ -13,15 +13,17 @@ android {
     sourceCompatibility = JavaVersion.VERSION_1_8
     targetCompatibility = JavaVersion.VERSION_1_8
   }
+  lintOptions {
+    checkReleaseBuilds false // CI runs full lint.
+  }
 }
 
 wire {
   sourcePath {
     srcDir "$rootDir/wire-grpc-sample/protos/src/main/proto"
   }
+
   kotlin {
-    out "src/main/java"
-    includes = ['com.squareup.wire.whiteboard.Whiteboard']
     rpcCallStyle = 'suspending'
     rpcRole = 'client'
     singleMethodServices = false
@@ -31,7 +33,6 @@ wire {
 dependencies {
   implementation project(':wire-grpc-sample:protos')
   implementation deps.kotlin.coroutines.android
-  implementation deps.kotlin.stdlib.jdk8
   implementation deps.androidx.appcompat
   implementation deps.androidx.ktx
   implementation deps.wire.grpcClient

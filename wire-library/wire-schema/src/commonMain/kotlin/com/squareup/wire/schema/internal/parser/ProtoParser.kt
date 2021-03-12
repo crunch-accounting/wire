@@ -15,11 +15,11 @@
  */
 package com.squareup.wire.schema.internal.parser
 
+import com.squareup.wire.Syntax
+import com.squareup.wire.Syntax.PROTO_3
 import com.squareup.wire.schema.Field
 import com.squareup.wire.schema.Field.Label.REQUIRED
 import com.squareup.wire.schema.Location
-import com.squareup.wire.schema.ProtoFile
-import com.squareup.wire.schema.ProtoFile.Syntax.PROTO_3
 import com.squareup.wire.schema.internal.MAX_TAG_VALUE
 
 /** Basic parser for `.proto` schema declarations. */
@@ -39,7 +39,7 @@ class ProtoParser internal constructor(
   private var declarationCount = 0
 
   /** The syntax of the file, or null if none is defined. */
-  private var syntax: ProtoFile.Syntax? = null
+  private var syntax: Syntax? = null
 
   /** Output package name, or null if none yet encountered. */
   private var packageName: String? = null
@@ -65,8 +65,22 @@ class ProtoParser internal constructor(
       }
 
       when (val declaration = readDeclaration(documentation, Context.FILE)) {
-        is TypeElement -> nestedTypes.add(declaration)
-        is ServiceElement -> services.add(declaration)
+        is TypeElement -> {
+          val duplicate = nestedTypes.find { it.name == declaration.name }
+          if (duplicate != null) {
+            error("${declaration.name} (${declaration.location}) is already defined at " +
+                "${duplicate.location}")
+          }
+          nestedTypes.add(declaration)
+        }
+        is ServiceElement -> {
+          val duplicate = services.find { it.name == declaration.name }
+          if (duplicate != null) {
+            error("${declaration.name} (${declaration.location}) is already defined at " +
+                "${duplicate.location}")
+          }
+          services.add(declaration)
+        }
         is OptionElement -> options.add(declaration)
         is ExtendElement -> extendsList.add(declaration)
       }
@@ -82,18 +96,17 @@ class ProtoParser internal constructor(
     val location = reader.location()
     val label = reader.readWord()
 
+    // TODO(benoit) Let's better parse the proto keywords. We are pretty weak when field/constants
+    //  are named after any of the label we check here.
     return when {
-      label == "package" -> {
-        reader.expect(context.permitsPackage(), location) { "'package' in $context" }
-        reader.expect(packageName == null, location) { "too many package names" }
+      label == "package" && context.permitsPackage() -> {
         packageName = reader.readName()
         prefix = "$packageName."
         reader.require(';')
         null
       }
 
-      label == "import" -> {
-        reader.expect(context.permitsImport(), location) { "'import' in $context" }
+      label == "import" && context.permitsImport() -> {
         when (val importString = reader.readString()) {
           "public" -> publicImports.add(reader.readString())
           else -> imports.add(importString)
@@ -102,15 +115,15 @@ class ProtoParser internal constructor(
         null
       }
 
-      label == "syntax" -> {
-        reader.expect(context.permitsSyntax(), location) { "'syntax' in $context" }
+      label == "syntax" && context.permitsSyntax() -> {
+        reader.expect(syntax == null, location) { "too many syntax definitions" }
         reader.require('=')
         reader.expect(index == 0, location) {
           "'syntax' element must be the first declaration in a file"
         }
         val syntaxString = reader.readQuotedString()
         try {
-          syntax = ProtoFile.Syntax[syntaxString]
+          syntax = Syntax[syntaxString]
         } catch (e: IllegalArgumentException) {
           throw reader.unexpected(e.message!!, location)
         }
@@ -125,23 +138,20 @@ class ProtoParser internal constructor(
       }
 
       label == "reserved" -> readReserved(location, documentation)
-      label == "message" -> readMessage(location, documentation)
-      label == "enum" -> readEnumElement(location, documentation)
-      label == "service" -> readService(location, documentation)
-      label == "extend" -> readExtend(location, documentation)
+      label == "message" && context.permitsMessage() -> readMessage(location, documentation)
+      label == "enum" && context.permitsEnum() -> readEnumElement(location, documentation)
+      label == "service" && context.permitsService() -> readService(location, documentation)
+      label == "extend" && context.permitsExtend() -> readExtend(location, documentation)
 
-      label == "rpc" -> {
-        reader.expect(context.permitsRpc(), location) { "'rpc' in $context" }
+      label == "rpc" && context.permitsRpc() -> {
         readRpc(location, documentation)
       }
 
-      label == "oneof" -> {
-        reader.expect(context.permitsOneOf(), location) { "'oneof' must be nested in message" }
+      label == "oneof" && context.permitsOneOf() -> {
         readOneOf(documentation)
       }
 
-      label == "extensions" -> {
-        reader.expect(context.permitsExtensions(), location) { "'extensions' must be nested" }
+      label == "extensions" && context.permitsExtensions() -> {
         readExtensions(location, documentation)
       }
 
@@ -342,6 +352,7 @@ class ProtoParser internal constructor(
     val options: MutableList<OptionElement> = OptionReader(reader).readOptions().toMutableList()
 
     val defaultValue = stripDefault(options)
+    val jsonName = stripJsonName(options)
     reader.require(';')
 
     documentation = reader.tryAppendTrailingDocumentation(documentation)
@@ -352,24 +363,35 @@ class ProtoParser internal constructor(
         type = type,
         name = name,
         defaultValue = defaultValue,
+        jsonName = jsonName,
         tag = tag,
         documentation = documentation,
         options = options.toList()
     )
   }
 
-  /**
-   * Defaults aren't options. This finds an option named "default", removes, and returns it. Returns
-   * null if no default option is present.
-   */
+  /** Defaults aren't options. */
   private fun stripDefault(options: MutableList<OptionElement>): String? {
+    return stripValue("default", options)
+  }
+
+  /** `json_name` isn't an option. */
+  private fun stripJsonName(options: MutableList<OptionElement>): String? {
+    return stripValue("json_name", options)
+  }
+
+  /**
+   * This finds an option named [name], removes, and returns it.
+   * Returns null if no [name] option is present.
+   */
+  private fun stripValue(name: String, options: MutableList<OptionElement>): String? {
     var result: String? = null
     val i = options.iterator()
     while (i.hasNext()) {
       val element = i.next()
-      if (element.name == "default") {
+      if (element.name == name) {
         i.remove()
-        result = element.value.toString() // Defaults aren't options!
+        result = element.value.toString()
       }
     }
     return result
@@ -379,6 +401,7 @@ class ProtoParser internal constructor(
     val name = reader.readName()
     val fields = mutableListOf<FieldElement>()
     val groups = mutableListOf<GroupElement>()
+    val options = mutableListOf<OptionElement>()
 
     reader.require('{')
     while (true) {
@@ -388,6 +411,10 @@ class ProtoParser internal constructor(
       val location = reader.location()
       when (val type = reader.readDataType()) {
         "group" -> groups.add(readGroup(location, nestedDocumentation, null))
+        "option" -> {
+          options.add(OptionReader(reader).readOption('='))
+          reader.require(';')
+        }
         else -> fields.add(readField(location, nestedDocumentation, null, type))
       }
     }
@@ -396,7 +423,8 @@ class ProtoParser internal constructor(
         name = name,
         documentation = documentation,
         fields = fields,
-        groups = groups
+        groups = groups,
+        options = options,
     )
   }
 
@@ -596,11 +624,19 @@ class ProtoParser internal constructor(
 
     fun permitsImport() = this == FILE
 
-    fun permitsExtensions() = this != FILE
+    fun permitsExtensions() = this == MESSAGE
 
     fun permitsRpc() = this == SERVICE
 
     fun permitsOneOf() = this == MESSAGE
+
+    fun permitsMessage() = this == FILE || this == MESSAGE
+
+    fun permitsService() = this == FILE
+
+    fun permitsEnum() = this == FILE || this == MESSAGE
+
+    fun permitsExtend() = this == FILE || this == MESSAGE
   }
 
   companion object {

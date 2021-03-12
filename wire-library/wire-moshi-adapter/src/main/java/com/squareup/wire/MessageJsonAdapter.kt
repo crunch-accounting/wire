@@ -18,86 +18,48 @@ package com.squareup.wire
 import com.squareup.moshi.JsonAdapter
 import com.squareup.moshi.JsonReader
 import com.squareup.moshi.JsonWriter
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.Types
 import com.squareup.wire.internal.RuntimeMessageAdapter
 import java.io.IOException
-import java.lang.reflect.Type
 
 internal class MessageJsonAdapter<M : Message<M, B>, B : Message.Builder<M, B>>(
-  moshi: Moshi,
-  type: Type
+  private val messageAdapter: RuntimeMessageAdapter<M, B>,
+  private val jsonAdapters: List<JsonAdapter<Any?>>,
+  private val redactedFieldsAdapter: JsonAdapter<List<String>>,
 ) : JsonAdapter<M>() {
-  private val messageAdapter =
-      RuntimeMessageAdapter.create(type as Class<M>, "square.github.io/wire/unknown")
-  private val fieldBindings = messageAdapter.fieldBindings.values.toTypedArray()
-  private val encodeNames: List<String>
-  private val options: JsonReader.Options
+  private val jsonNames = messageAdapter.jsonNames
+  private val jsonAlternateNames = messageAdapter.jsonAlternateNames
 
-  init {
+  private val options: JsonReader.Options = run {
     val optionStrings = mutableListOf<String>()
-    val encodeNames = mutableListOf<String>()
-    for (fieldBinding in fieldBindings) {
-      // Add it for the declared name.
-      val declaredName = fieldBinding.declaredName
-      optionStrings += declaredName
-
-      val jsonName = fieldBinding.jsonName
-      encodeNames += jsonName
-
-      // Make sure we have exactly 2*N unique option strings so the indexes line up. If the camel
-      // case name and the declared name are the same, pad the list with a bogus name.
-      optionStrings += if (jsonName == declaredName) "$jsonName\u0000" else jsonName
+    for (i in jsonNames.indices) {
+      val encodeName = jsonNames[i]
+      optionStrings += encodeName
+      optionStrings += jsonAlternateNames[i] ?: "$encodeName\u0000"
     }
-    this.options = JsonReader.Options.of(*optionStrings.toTypedArray())
-    this.encodeNames = encodeNames
-  }
-
-  private val jsonAdapters = fieldBindings.map { fieldBinding ->
-    var fieldType: Type = fieldBinding.singleAdapter().type?.javaObjectType as Type
-    if (fieldBinding.isStruct) {
-      return@map StructJsonAdapter.serializeNulls()
-    }
-    if (fieldBinding.isMap) {
-      val keyType = fieldBinding.keyAdapter().type?.javaObjectType
-      fieldType = Types.newParameterizedType(Map::class.java, keyType, fieldType)
-    } else if (fieldBinding.label.isRepeated) {
-      fieldType = Types.newParameterizedType(List::class.java, fieldType)
-    }
-
-    val syntheticQualifier: Class<out Annotation>? = when {
-      fieldBinding.singleAdapter() === ProtoAdapter.UINT64 -> Uint64::class.java
-      fieldBinding.label == WireField.Label.OMIT_IDENTITY -> OmitIdentity::class.java
-      else -> null
-    }
-
-    return@map when {
-      syntheticQualifier != null -> moshi.adapter<Any>(fieldType, syntheticQualifier)
-      else -> moshi.adapter(fieldType)
-    }
+    return@run JsonReader.Options.of(*optionStrings.toTypedArray())
   }
 
   @Throws(IOException::class)
   override fun toJson(out: JsonWriter, message: M?) {
-    if (message == null) {
-      out.nullValue()
-      return
-    }
+    val redactedFieldsAdapter = when (out.tag(RedactedTag::class.java)?.enabled) {
+      true -> redactedFieldsAdapter
+      else -> null
+    } as JsonAdapter<Any?>?
+
     out.beginObject()
-    fieldBindings.forEachIndexed { index, fieldBinding ->
-      out.name(encodeNames[index])
-      val value = fieldBinding[message]
-      jsonAdapters[index]?.toJson(out, value)
+    messageAdapter.writeAllFields(
+        message = message,
+        jsonAdapters = jsonAdapters,
+        redactedFieldsAdapter = redactedFieldsAdapter
+    ) { name, value, jsonAdapter ->
+      out.name(name)
+      jsonAdapter.toJson(out, value)
     }
     out.endObject()
   }
 
   @Throws(IOException::class)
-  override fun fromJson(input: JsonReader): M? {
-    if (input.peek() == JsonReader.Token.NULL) {
-      input.nextNull<Any>()
-      return null
-    }
+  override fun fromJson(input: JsonReader): M {
     val builder = messageAdapter.newBuilder()
     input.beginObject()
     while (input.hasNext()) {
@@ -108,13 +70,15 @@ internal class MessageJsonAdapter<M : Message<M, B>, B : Message.Builder<M, B>>(
         continue
       }
       val index = option / 2
-      val fieldBinding = fieldBindings[index]
-      val value = jsonAdapters[index]?.fromJson(input) ?: continue
 
-      // If the value was explicitly null we ignore it rather than forcing null into the field.
-      // Otherwise malformed JSON that sets a list to null will create a malformed message, and
-      // we'd rather just ignore that problem.
-      fieldBinding[builder] = value
+      val value = jsonAdapters[index].fromJson(input)
+
+      // "If a value is missing in the JSON-encoded data or if its value is null, it will be
+      // interpreted as the appropriate default value when parsed into a protocol buffer."
+      if (value == null) continue
+
+      val fieldBinding = messageAdapter.fieldBindingsArray[index]
+      fieldBinding.set(builder, value)
     }
     input.endObject()
     return builder.build()

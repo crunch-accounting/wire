@@ -6,6 +6,9 @@ buildscript {
     'compiler': "com.squareup.wire:wire-compiler",
     'gradlePlugin': "com.squareup.wire:wire-gradle-plugin",
     'grpcClient': "com.squareup.wire:wire-grpc-client",
+    'grpcServer': "com.squareup.wire:wire-grpc-server",
+    'grpcMockWebServer': "com.squareup.wire:wire-grpc-mockwebserver",
+    'gsonSupport': "com.squareup.wire:wire-gson-support",
     'javaGenerator': "com.squareup.wire:wire-java-generator",
     'kotlinGenerator': "com.squareup.wire:wire-kotlin-generator",
     'moshiAdapter': "com.squareup.wire:wire-moshi-adapter",
@@ -21,7 +24,7 @@ buildscript {
     classpath deps.plugins.japicmp
     classpath deps.plugins.mavenPublish
     classpath deps.animalSniffer.gradle
-    classpath deps.androidGradlePlugin
+    classpath deps.plugins.android
     classpath deps.protobuf.gradlePlugin
   }
 

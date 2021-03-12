@@ -1,5 +1,6 @@
 apply plugin: 'org.jetbrains.kotlin.jvm'
 apply plugin: 'java-gradle-plugin'
+apply plugin: 'maven-publish'
 
 gradlePlugin {
   plugins {
@@ -13,10 +14,10 @@ gradlePlugin {
 dependencies {
   implementation project(':wire-compiler')
   implementation project(':wire-kotlin-generator')
-  implementation deps.kotlin.stdlib.jdk8
 
   compileOnly gradleApi()
   implementation deps.plugins.kotlin
+  compileOnly deps.plugins.android
 
   testImplementation deps.junit
   testImplementation deps.assertj

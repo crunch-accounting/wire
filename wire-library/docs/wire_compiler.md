@@ -42,9 +42,28 @@ src/
 build.gradle
 ```
 
-Because this project uses the standard location the plugin configuration is easy. Just a simple
-block in `build.gradle`:
+Because this project uses the default configuration, plugin setup is easy. Just a simple
+block in `build.gradle`,
 
+Using plugin application:
+```groovy
+buildscript {
+  repositories {
+    mavenCentral()
+  }
+  dependencies {
+    classpath 'com.squareup.wire:wire-gradle-plugin:<version>'
+  }
+}
+
+apply plugin: 'com.squareup.wire'
+
+wire {
+  kotlin {}
+}
+```
+
+Using the plugins DSL:
 ```groovy
 plugins {
   id 'application'
@@ -53,8 +72,7 @@ plugins {
 }
 
 wire {
-  kotlin {
-  }
+  kotlin {}
 }
 ```
 
@@ -171,7 +189,7 @@ Large projects may span multiple modules. To support this Wire has a 'proto path
 schema files on this path are used for linking and validation, but they do not yield files in the
 generated output.
 
-The proto path supports the same inputs as the proto path: directories, `.jar` files, and Maven
+The proto path supports the same inputs as the source path: directories, `.jar` files, and Maven
 coordinates. Similarly, the proto path may be filtered with `include`.
 
 ```groovy
@@ -197,6 +215,46 @@ The source path and proto path are linked together but only types on the source 
 
 ![Library](images/gradle_library@2x.png)
 
+Dependencies between Gradle Modules
+-----------------------------
+
+Wire provides support to define dependencies between modules within the same project.
+
+A module can include its `.proto` files into the output resources. Use this when your `.jar` file
+can be used as a library for other proto or Wire projects. Note that only the `.proto` files used
+in the library will be included.
+
+```groovy
+wire {
+  protoLibrary = true
+}
+```
+
+Wire also creates two configurations, `protoPath` and `protoSource` you can use to define a
+dependency on another proto or Wire project.
+
+```groovy
+dependencies {
+  // The task `:common-protos:jar` will be added into the dependency
+  // graph of this module for the Wire generating tasks.
+  protoPath(project(':common-protos'))
+  implementation(project(':common-protos'))
+}
+
+wire {
+  kotlin {
+  }
+}
+```
+
+Note that `protoPath` and `protoSource` dependencies are not transitive by default. If needed, you
+can change it manually.
+
+```groovy
+configurations.protoPath {
+  transitive = true
+}
+```
 
 Pruning
 -------
@@ -241,8 +299,9 @@ wire {
 Another way to prune obsolete fields is to assign them a version, then to generate your code
 against a version range or a unique version. The fields out of the version range will get pruned.
 
-Members, or enum constants, may be declared with `wire.since` and `wire.until` options. For example,
-these options declare a field `age` that was replaced with `birth_date` in version "5.0":
+Members may be declared with `wire.since` and `wire.until` options; enum constant can use
+`wire.constant_since` and `wire.constant_until`. For example, these options declare a field `age`
+that was replaced with `birth_date` in version "5.0":
 
 ```proto
 import "wire/extensions.proto";
@@ -272,6 +331,21 @@ wire {
   untilVersion "6.0"
 }
 ```
+
+### Proto Libraries
+
+By default, `.proto` input files are not included in the generated `.jar` artifact. Use the
+`protoLibrary` option to include them:
+
+```groovy
+wire {
+  protoLibrary = true
+}
+```
+
+This is most useful when building `.jar` files for other `wire` tasks to use as dependencies. Note
+that only the true sources are included – proto messages that are pruned or not used are not
+included in the output artifact.
 
 Customizing Output
 ------------------
@@ -314,6 +388,12 @@ wire {
     // True to emit code that uses reflection for reading, writing, and toString
     // methods which are normally implemented with generated code.
     compact = true
+
+    // True to emit types for options declared on messages, fields, etc.
+    emitDeclaredOptions = false,
+
+    // True to emit annotations for options applied on messages, fields, etc.
+    emitAppliedOptions = true
   }
 }
 ```
@@ -355,6 +435,12 @@ wire {
     // target.
     javaInterop = true
 
+    // True to emit types for options declared on messages, fields, etc.
+    emitDeclaredOptions = false,
+
+    // True to emit annotations for options applied on messages, fields, etc.
+    emitAppliedOptions = true,
+
     // `suspending` to generate coroutines APIs that require a Kotlin coroutines context.
     // `blocking` to generate blocking APIs callable by Java and Kotlin.
     rpcCallStyle = 'blocking'
@@ -384,6 +470,47 @@ wire {
 }
 ```
 
+### Custom Handlers
+
+Wire has an unstable API to generate code or other artifacts from a proto schema.
+
+You'll need to implement the [CustomHandlerBeta] interface. See our [MarkdownHandler] for a sample
+implementation. Note that this interface is subject to change.
+
+Build that into an `jar` artifact and add that as a buildscript dependency to your Gradle project.
+
+```groovy
+buildscript {
+  dependencies {
+    classpath "com.example.my-custom-handler:my-custom-handler:1.0.0"
+  }
+}
+```
+
+Next configure the Wire plugin to call your custom handler. Here's an exhaustive custom
+configuration. Booleans and enums are shown with their non-default behavior.
+
+```groovy
+wire {
+  custom {
+   // The name of a Java class to generate code with. This class must:
+   //  * be in the buildscript dependencies for this Gradle project
+   //  * be a public class
+   //  * have a public no-arguments constructor
+   //  * implement the com.squareup.wire.schema.CustomHandlerBeta interface
+   customHandlerClass = "com.example.MyCustomHandler"
+
+   // These options work the same as the java and kotlin targets above.
+   includes = ['com.example.pizza.*']
+   excludes = ['com.example.sales.*']
+   exclusive = false
+   out "${buildDir}/custom"
+  }
+}
+```
+
+ [CustomHandlerBeta]: https://github.com/square/wire/blob/5fac94f86879fdd7e412cddbeb51e09a708b2b64/wire-library/wire-compiler/src/main/java/com/squareup/wire/schema/Target.kt#L583-L596
+ [MarkdownHandler]: https://github.com/square/wire/blob/ebacb88b1c487a7e7d97ff3729c67907e1f95616/wire-library/wire-compiler/src/test/java/com/squareup/wire/schema/MarkdownHandler.kt
  [gradle]: https://gradle.org/
  [kotlinpoet]: https://github.com/square/kotlinpoet
  [maven_coordinates]: https://maven.apache.org/pom.html#Maven_Coordinates

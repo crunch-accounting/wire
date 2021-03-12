@@ -26,6 +26,8 @@ import com.squareup.wire.ProtoWriter.Companion.tagSize
 import com.squareup.wire.ProtoWriter.Companion.varint32Size
 import com.squareup.wire.ProtoWriter.Companion.varint64Size
 import com.squareup.wire.internal.Throws
+import com.squareup.wire.internal.missingRequiredFields
+import com.squareup.wire.internal.redactElements
 import okio.Buffer
 import okio.BufferedSink
 import okio.BufferedSource
@@ -39,7 +41,9 @@ import kotlin.reflect.KClass
 expect abstract class ProtoAdapter<E>(
   fieldEncoding: FieldEncoding,
   type: KClass<*>?,
-  typeUrl: String?
+  typeUrl: String?,
+  syntax: Syntax,
+  identity: E? = null
 ) {
   internal val fieldEncoding: FieldEncoding
   val type: KClass<*>?
@@ -51,6 +55,27 @@ expect abstract class ProtoAdapter<E>(
    * type URLS.
    */
   val typeUrl: String?
+
+  /**
+   * Identifies the syntax in which [type] is defined in the proto schema. This string contains
+   * either "proto2" or "proto3".
+   */
+  val syntax: Syntax
+
+  /**
+   * A special value that is used when a field is absent from an encoded proto3 message. When
+   * encoding a proto3 message, fields that hold this value will be omitted.
+   *
+   * | TYPE                                           | IDENTITY                      |
+   * | :--------------------------------------------- | :---------------------------- |
+   * | All numeric types (int32, float, double, etc.) | 0                             |
+   * | Boolean                                        | false                         |
+   * | String                                         | empty string: ""              |
+   * | Bytes                                          | empty bytes: ByteString.EMPTY |
+   * | Enums                                          | enum constant with tag 0      |
+   * | Lists (repeated types)                         | empty list: listOf()          |
+   */
+  val identity: E?
 
   internal val packedAdapter: ProtoAdapter<List<E>>?
   internal val repeatedAdapter: ProtoAdapter<List<E>>?
@@ -162,10 +187,21 @@ expect abstract class ProtoAdapter<E>(
     @JvmField val BYTES: ProtoAdapter<ByteString>
     @JvmField val STRING: ProtoAdapter<String>
     @JvmField val DURATION: ProtoAdapter<Duration>
-    @JvmField val STRUCT_MAP: ProtoAdapter<Map<String, *>>
-    @JvmField val STRUCT_LIST: ProtoAdapter<List<*>>
+    @JvmField val INSTANT: ProtoAdapter<Instant>
+    @JvmField val EMPTY: ProtoAdapter<Unit>
+    @JvmField val STRUCT_MAP: ProtoAdapter<Map<String, *>?>
+    @JvmField val STRUCT_LIST: ProtoAdapter<List<*>?>
     @JvmField val STRUCT_NULL: ProtoAdapter<Nothing?>
     @JvmField val STRUCT_VALUE: ProtoAdapter<Any?>
+    @JvmField val DOUBLE_VALUE: ProtoAdapter<Double?>
+    @JvmField val FLOAT_VALUE: ProtoAdapter<Float?>
+    @JvmField val INT64_VALUE: ProtoAdapter<Long?>
+    @JvmField val UINT64_VALUE: ProtoAdapter<Long?>
+    @JvmField val INT32_VALUE: ProtoAdapter<Int?>
+    @JvmField val UINT32_VALUE: ProtoAdapter<Int?>
+    @JvmField val BOOL_VALUE: ProtoAdapter<Boolean?>
+    @JvmField val STRING_VALUE: ProtoAdapter<String?>
+    @JvmField val BYTES_VALUE: ProtoAdapter<ByteString?>
   }
 }
 
@@ -173,10 +209,10 @@ expect abstract class ProtoAdapter<E>(
 internal inline fun <E> ProtoAdapter<E>.commonEncodedSizeWithTag(tag: Int, value: E?): Int {
   if (value == null) return 0
   var size = encodedSize(value)
-  if (fieldEncoding == FieldEncoding.LENGTH_DELIMITED) {
+  if (fieldEncoding == LENGTH_DELIMITED) {
     size += varint32Size(size)
   }
-  return size + ProtoWriter.tagSize(tag)
+  return size + tagSize(tag)
 }
 
 @Suppress("NOTHING_TO_INLINE")
@@ -187,7 +223,7 @@ internal inline fun <E> ProtoAdapter<E>.commonEncodeWithTag(
 ) {
   if (value == null) return
   writer.writeTag(tag, fieldEncoding)
-  if (fieldEncoding == FieldEncoding.LENGTH_DELIMITED) {
+  if (fieldEncoding == LENGTH_DELIMITED) {
     writer.writeVarint32(encodedSize(value))
   }
   encode(writer, value)
@@ -240,7 +276,7 @@ internal inline fun <E> ProtoAdapter<E>.commonWithLabel(label: WireField.Label):
 
 @Suppress("NOTHING_TO_INLINE")
 internal inline fun <E> ProtoAdapter<E>.commonCreatePacked(): ProtoAdapter<List<E>> {
-  require(fieldEncoding != FieldEncoding.LENGTH_DELIMITED) {
+  require(fieldEncoding != LENGTH_DELIMITED) {
     "Unable to pack a length-delimited type."
   }
   return PackedProtoAdapter(originalAdapter = this)
@@ -248,7 +284,13 @@ internal inline fun <E> ProtoAdapter<E>.commonCreatePacked(): ProtoAdapter<List<
 
 internal class PackedProtoAdapter<E>(
   private val originalAdapter: ProtoAdapter<E>
-) : ProtoAdapter<List<E>>(FieldEncoding.LENGTH_DELIMITED, List::class, null) {
+) : ProtoAdapter<List<E>>(
+    LENGTH_DELIMITED,
+    List::class,
+    null,
+    originalAdapter.syntax,
+    listOf<E>()
+) {
   @Throws(IOException::class)
   override fun encodeWithTag(writer: ProtoWriter, tag: Int, value: List<E>?) {
     if (value != null && value.isNotEmpty()) {
@@ -288,7 +330,13 @@ internal inline fun <E> ProtoAdapter<E>.commonCreateRepeated(): ProtoAdapter<Lis
 
 internal class RepeatedProtoAdapter<E>(
   private val originalAdapter: ProtoAdapter<E>
-) : ProtoAdapter<List<E>>(originalAdapter.fieldEncoding, List::class, null) {
+) : ProtoAdapter<List<E>>(
+    originalAdapter.fieldEncoding,
+    List::class,
+    null,
+    originalAdapter.syntax,
+    listOf<E>()
+) {
   override fun encodedSize(value: List<E>): Int {
     throw UnsupportedOperationException("Repeated values can only be sized with a tag.")
   }
@@ -323,7 +371,13 @@ internal class RepeatedProtoAdapter<E>(
 internal class MapProtoAdapter<K, V> internal constructor(
   keyAdapter: ProtoAdapter<K>,
   valueAdapter: ProtoAdapter<V>
-) : ProtoAdapter<Map<K, V>>(FieldEncoding.LENGTH_DELIMITED, Map::class, null) {
+) : ProtoAdapter<Map<K, V>>(
+    LENGTH_DELIMITED,
+    Map::class,
+    null,
+    valueAdapter.syntax,
+    mapOf<K, V>()
+) {
   private val entryAdapter = MapEntryProtoAdapter(keyAdapter, valueAdapter)
 
   override fun encodedSize(value: Map<K, V>): Int {
@@ -379,7 +433,12 @@ internal class MapProtoAdapter<K, V> internal constructor(
 private class MapEntryProtoAdapter<K, V> internal constructor(
   internal val keyAdapter: ProtoAdapter<K>,
   internal val valueAdapter: ProtoAdapter<V>
-) : ProtoAdapter<Map.Entry<K, V>>(FieldEncoding.LENGTH_DELIMITED, Map.Entry::class, null) {
+) : ProtoAdapter<Map.Entry<K, V>>(
+    LENGTH_DELIMITED,
+    Map.Entry::class,
+    null,
+    valueAdapter.syntax
+) {
 
   override fun encodedSize(value: Map.Entry<K, V>): Int {
     return keyAdapter.encodedSizeWithTag(1, value.key) +
@@ -414,9 +473,11 @@ internal inline fun <K, V> commonNewMapAdapter(
 }
 
 internal fun commonBool(): ProtoAdapter<Boolean> = object : ProtoAdapter<Boolean>(
-    FieldEncoding.VARINT,
+    VARINT,
     Boolean::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    false
 ) {
   override fun encodedSize(value: Boolean): Int = FIXED_BOOL_SIZE
 
@@ -436,9 +497,11 @@ internal fun commonBool(): ProtoAdapter<Boolean> = object : ProtoAdapter<Boolean
 }
 
 internal fun commonInt32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
-    FieldEncoding.VARINT,
+    VARINT,
     Int::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0
 ) {
   override fun encodedSize(value: Int): Int = int32Size(value)
 
@@ -454,9 +517,11 @@ internal fun commonInt32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
 }
 
 internal fun commonUint32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
-    FieldEncoding.VARINT,
+    VARINT,
     Int::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0
 ) {
   override fun encodedSize(value: Int): Int = varint32Size(value)
 
@@ -472,9 +537,11 @@ internal fun commonUint32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
 }
 
 internal fun commonSint32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
-    FieldEncoding.VARINT,
+    VARINT,
     Int::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0
 ) {
   override fun encodedSize(value: Int): Int = varint32Size(encodeZigZag32(value))
 
@@ -492,7 +559,9 @@ internal fun commonSint32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
 internal fun commonFixed32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
     FieldEncoding.FIXED32,
     Int::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0
 ) {
   override fun encodedSize(value: Int): Int = FIXED_32_SIZE
 
@@ -509,9 +578,11 @@ internal fun commonFixed32(): ProtoAdapter<Int> = object : ProtoAdapter<Int>(
 
 internal fun commonSfixed32() = commonFixed32()
 internal fun commonInt64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
-    FieldEncoding.VARINT,
+    VARINT,
     Long::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0L
 ) {
   override fun encodedSize(value: Long): Int = varint64Size(value)
 
@@ -531,9 +602,11 @@ internal fun commonInt64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
  * in JSON.
  */
 internal fun commonUint64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
-    FieldEncoding.VARINT,
+    VARINT,
     Long::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0L
 ) {
   override fun encodedSize(value: Long): Int = varint64Size(value)
 
@@ -549,9 +622,11 @@ internal fun commonUint64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
 }
 
 internal fun commonSint64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
-    FieldEncoding.VARINT,
+    VARINT,
     Long::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0L
 ) {
   override fun encodedSize(value: Long): Int = varint64Size(encodeZigZag64(value))
 
@@ -569,7 +644,9 @@ internal fun commonSint64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
 internal fun commonFixed64(): ProtoAdapter<Long> = object : ProtoAdapter<Long>(
     FieldEncoding.FIXED64,
     Long::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0L
 ) {
   override fun encodedSize(value: Long): Int = FIXED_64_SIZE
 
@@ -588,7 +665,9 @@ internal fun commonSfixed64() = commonFixed64()
 internal fun commonFloat(): ProtoAdapter<Float> = object : ProtoAdapter<Float>(
     FieldEncoding.FIXED32,
     Float::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0.0f
 ) {
   override fun encodedSize(value: Float): Int = FIXED_32_SIZE
 
@@ -608,7 +687,9 @@ internal fun commonFloat(): ProtoAdapter<Float> = object : ProtoAdapter<Float>(
 internal fun commonDouble(): ProtoAdapter<Double> = object : ProtoAdapter<Double>(
     FieldEncoding.FIXED64,
     Double::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    0.0
 ) {
   override fun encodedSize(value: Double): Int = FIXED_64_SIZE
 
@@ -626,9 +707,11 @@ internal fun commonDouble(): ProtoAdapter<Double> = object : ProtoAdapter<Double
 }
 
 internal fun commonString(): ProtoAdapter<String> = object : ProtoAdapter<String>(
-    FieldEncoding.LENGTH_DELIMITED,
+    LENGTH_DELIMITED,
     String::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    ""
 ) {
   override fun encodedSize(value: String): Int = value.utf8Size().toInt()
 
@@ -644,9 +727,11 @@ internal fun commonString(): ProtoAdapter<String> = object : ProtoAdapter<String
 }
 
 internal fun commonBytes(): ProtoAdapter<ByteString> = object : ProtoAdapter<ByteString>(
-    FieldEncoding.LENGTH_DELIMITED,
+    LENGTH_DELIMITED,
     ByteString::class,
-    null
+    null,
+    Syntax.PROTO_2,
+    ByteString.EMPTY
 ) {
   override fun encodedSize(value: ByteString): Int = value.size
 
@@ -662,9 +747,10 @@ internal fun commonBytes(): ProtoAdapter<ByteString> = object : ProtoAdapter<Byt
 }
 
 internal fun commonDuration(): ProtoAdapter<Duration> = object : ProtoAdapter<Duration>(
-    FieldEncoding.LENGTH_DELIMITED,
+    LENGTH_DELIMITED,
     Duration::class,
-    "type.googleapis.com/google.protobuf.Duration"
+    "type.googleapis.com/google.protobuf.Duration",
+    Syntax.PROTO_3
 ) {
   override fun encodedSize(value: Duration): Int {
     var result = 0
@@ -722,12 +808,70 @@ internal fun commonDuration(): ProtoAdapter<Duration> = object : ProtoAdapter<Du
     }
 }
 
-internal fun commonStructMap(): ProtoAdapter<Map<String, *>> = object : ProtoAdapter<Map<String, *>>(
+internal fun commonInstant(): ProtoAdapter<Instant> = object : ProtoAdapter<Instant>(
+    LENGTH_DELIMITED,
+    Instant::class,
+    "type.googleapis.com/google.protobuf.Timestamp",
+    Syntax.PROTO_3
+) {
+  override fun encodedSize(value: Instant): Int {
+    var result = 0
+    val seconds = value.getEpochSecond()
+    if (seconds != 0L) result += INT64.encodedSizeWithTag(1, seconds)
+    val nanos = value.getNano()
+    if (nanos != 0) result += INT32.encodedSizeWithTag(2, nanos)
+    return result
+  }
+
+  override fun encode(writer: ProtoWriter, value: Instant) {
+    val seconds = value.getEpochSecond()
+    if (seconds != 0L) INT64.encodeWithTag(writer, 1, seconds)
+    val nanos = value.getNano()
+    if (nanos != 0) INT32.encodeWithTag(writer, 2, nanos)
+  }
+
+  override fun decode(reader: ProtoReader): Instant {
+    var seconds = 0L
+    var nanos = 0
+    reader.forEachTag { tag ->
+      when (tag) {
+        1 -> seconds = INT64.decode(reader)
+        2 -> nanos = INT32.decode(reader)
+        else -> reader.readUnknownField(tag)
+      }
+    }
+    return ofEpochSecond(seconds, nanos.toLong())
+  }
+
+  override fun redact(value: Instant): Instant = value
+}
+
+internal fun commonEmpty(): ProtoAdapter<Unit> = object : ProtoAdapter<Unit>(
+    LENGTH_DELIMITED,
+    Unit::class,
+    "type.googleapis.com/google.protobuf.Empty",
+    Syntax.PROTO_3
+) {
+  override fun encodedSize(value: Unit): Int = 0
+
+  override fun encode(writer: ProtoWriter, value: Unit) = Unit
+
+  override fun decode(reader: ProtoReader) {
+    reader.forEachTag { tag -> reader.readUnknownField(tag) }
+  }
+
+  override fun redact(value: Unit): Unit = value
+}
+
+internal fun commonStructMap(): ProtoAdapter<Map<String, *>?> = object : ProtoAdapter<Map<String, *>?>(
     LENGTH_DELIMITED,
     Map::class,
-    "type.googleapis.com/google.protobuf.Struct"
+    "type.googleapis.com/google.protobuf.Struct",
+    Syntax.PROTO_3
 ) {
-  override fun encodedSize(value: Map<String, *>): Int {
+  override fun encodedSize(value: Map<String, *>?): Int {
+    if (value == null) return 0
+
     var size = 0
     for ((k, v) in value) {
       val entrySize = STRING.encodedSizeWithTag(1, k) + STRUCT_VALUE.encodedSizeWithTag(2, v)
@@ -736,7 +880,9 @@ internal fun commonStructMap(): ProtoAdapter<Map<String, *>> = object : ProtoAda
     return size
   }
 
-  override fun encode(writer: ProtoWriter, value: Map<String, *>) {
+  override fun encode(writer: ProtoWriter, value: Map<String, *>?) {
+    if (value == null) return
+
     for ((k, v) in value) {
       val entrySize = STRING.encodedSizeWithTag(1, k) + STRUCT_VALUE.encodedSizeWithTag(2, v)
       writer.writeTag(1, LENGTH_DELIMITED)
@@ -746,7 +892,7 @@ internal fun commonStructMap(): ProtoAdapter<Map<String, *>> = object : ProtoAda
     }
   }
 
-  override fun decode(reader: ProtoReader): Map<String, *> {
+  override fun decode(reader: ProtoReader): Map<String, *>? {
     val result = mutableMapOf<String, Any?>()
     reader.forEachTag { entryTag ->
       if (entryTag != 1) return@forEachTag reader.skip()
@@ -765,15 +911,18 @@ internal fun commonStructMap(): ProtoAdapter<Map<String, *>> = object : ProtoAda
     return result
   }
 
-  override fun redact(value: Map<String, *>) = value.mapValues { STRUCT_VALUE.redact(it) }
+  override fun redact(value: Map<String, *>?) = value?.mapValues { STRUCT_VALUE.redact(it) }
 }
 
-internal fun commonStructList(): ProtoAdapter<List<*>> = object : ProtoAdapter<List<*>>(
+internal fun commonStructList(): ProtoAdapter<List<*>?> = object : ProtoAdapter<List<*>?>(
     LENGTH_DELIMITED,
     Map::class,
-    "type.googleapis.com/google.protobuf.ListValue"
+    "type.googleapis.com/google.protobuf.ListValue",
+    Syntax.PROTO_3
 ) {
-  override fun encodedSize(value: List<*>): Int {
+  override fun encodedSize(value: List<*>?): Int {
+    if (value == null) return 0
+
     var result = 0
     for (v in value) {
       result += STRUCT_VALUE.encodedSizeWithTag(1, v)
@@ -781,13 +930,15 @@ internal fun commonStructList(): ProtoAdapter<List<*>> = object : ProtoAdapter<L
     return result
   }
 
-  override fun encode(writer: ProtoWriter, value: List<*>) {
+  override fun encode(writer: ProtoWriter, value: List<*>?) {
+    if (value == null) return
+
     for (v in value) {
       STRUCT_VALUE.encodeWithTag(writer, 1, v)
     }
   }
 
-  override fun decode(reader: ProtoReader): List<*> {
+  override fun decode(reader: ProtoReader): List<*>? {
     val result = mutableListOf<Any?>()
     reader.forEachTag { entryTag ->
       if (entryTag != 1) return@forEachTag reader.skip()
@@ -796,13 +947,14 @@ internal fun commonStructList(): ProtoAdapter<List<*>> = object : ProtoAdapter<L
     return result
   }
 
-  override fun redact(value: List<*>) = value.map { STRUCT_VALUE.redact(it) }
+  override fun redact(value: List<*>?) = value?.map { STRUCT_VALUE.redact(it) }
 }
 
 internal fun commonStructNull(): ProtoAdapter<Nothing?> = object : ProtoAdapter<Nothing?>(
     VARINT,
     Nothing::class,
-    "type.googleapis.com/google.protobuf.NullValue"
+    "type.googleapis.com/google.protobuf.NullValue",
+    Syntax.PROTO_3
 ) {
   override fun encodedSize(value: Nothing?): Int = varint32Size(0)
 
@@ -832,7 +984,8 @@ internal fun commonStructNull(): ProtoAdapter<Nothing?> = object : ProtoAdapter<
 internal fun commonStructValue(): ProtoAdapter<Any?> = object : ProtoAdapter<Any?>(
     LENGTH_DELIMITED,
     Any::class,
-    "type.googleapis.com/google.protobuf.Value"
+    "type.googleapis.com/google.protobuf.Value",
+    Syntax.PROTO_3
 ) {
   override fun encodedSize(value: Any?): Int {
     @Suppress("UNCHECKED_CAST") // Assume map keys are strings.
@@ -905,6 +1058,43 @@ internal fun commonStructValue(): ProtoAdapter<Any?> = object : ProtoAdapter<Any
       is Map<*, *> -> STRUCT_MAP.redact(value as Map<String, *>)
       is List<*> -> STRUCT_LIST.redact(value)
       else -> throw IllegalArgumentException("unexpected struct value: $value")
+    }
+  }
+}
+
+internal fun <T : Any> commonWrapper(delegate: ProtoAdapter<T>, typeUrl: String): ProtoAdapter<T?> {
+  return object : ProtoAdapter<T?>(
+      LENGTH_DELIMITED,
+      delegate.type,
+      typeUrl,
+      Syntax.PROTO_3,
+      null
+  ) {
+    override fun encodedSize(value: T?): Int {
+      if (value == null) return 0
+      return delegate.encodedSizeWithTag(1, value)
+    }
+
+    override fun encode(writer: ProtoWriter, value: T?) {
+      if (value != null) {
+        delegate.encodeWithTag(writer, 1, value)
+      }
+    }
+
+    override fun decode(reader: ProtoReader): T? {
+      var result: T? = null
+      reader.forEachTag { tag ->
+        when (tag) {
+          1 -> result = delegate.decode(reader)
+          else -> reader.readUnknownField(tag)
+        }
+      }
+      return result
+    }
+
+    override fun redact(value: T?): T? {
+      if (value == null) return null
+      return delegate.redact(value)
     }
   }
 }

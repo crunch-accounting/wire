@@ -15,12 +15,13 @@
  */
 package com.squareup.wire.schema
 
+import com.squareup.wire.Syntax
 import com.squareup.wire.schema.Extend.Companion.fromElements
 import com.squareup.wire.schema.Service.Companion.fromElements
 import com.squareup.wire.schema.Type.Companion.fromElements
 import com.squareup.wire.schema.internal.parser.ProtoFileElement
 
-class ProtoFile private constructor(
+data class ProtoFile(
   val location: Location,
   val imports: List<String>,
   val publicImports: List<String>,
@@ -82,6 +83,10 @@ class ProtoFile private constructor(
     return javaPackage?.toString()
   }
 
+  fun wirePackage(): String? {
+    return options.get(WIRE_PACKAGE)?.toString()
+  }
+
   /**
    * Returns a new proto file that omits types, services, extensions, and options not in
    * `pruningRules`.
@@ -102,14 +107,12 @@ class ProtoFile private constructor(
   }
 
   /** Return a copy of this file with only the marked types. */
-  fun retainLinked(linkedTypes: Set<ProtoType>): ProtoFile {
+  fun retainLinked(linkedTypes: Set<ProtoType>, linkedFields: Set<Field>): ProtoFile {
     val retainedTypes = types.mapNotNull { it.retainLinked(linkedTypes) }
+    val retainedExtends = extendList.mapNotNull { it.retainLinked(linkedFields) }
 
     // Other .proto files can't link to our services so strip them unconditionally.
     val retainedServices = emptyList<Service>()
-
-    // Strip the extends. They've already been applied to their target types.
-    val retainedExtends = emptyList<Extend>()
 
     val retainedOptions = options.retainLinked()
 
@@ -125,21 +128,13 @@ class ProtoFile private constructor(
     for (path in imports) {
       val importedProtoFile = findProtoFile(retained, path) ?: continue
 
-      if (importedProtoFile.types.isEmpty() &&
-          importedProtoFile.services.isEmpty() &&
-          importedProtoFile.extendList.isEmpty()) {
-
+      if (path == "google/protobuf/descriptor.proto" &&
+          extendList.any { it.name.startsWith("google.protobuf.")}) {
         // If we extend a google protobuf type, we should keep the import.
-        if (path == "google/protobuf/descriptor.proto") {
-          for (extend in extendList) {
-            if (extend.name.startsWith("google.protobuf.")) {
-              retainedImports.add(path)
-              break
-            }
-          }
-        }
-
-      } else {
+        retainedImports.add(path)
+      } else if (importedProtoFile.types.isNotEmpty() ||
+          importedProtoFile.services.isNotEmpty() ||
+          importedProtoFile.extendList.isNotEmpty()) {
         retainedImports.add(path)
       }
     }
@@ -154,8 +149,8 @@ class ProtoFile private constructor(
     }
   }
 
-  fun linkOptions(linker: Linker) {
-    options.link(linker)
+  fun linkOptions(linker: Linker, validate: Boolean) {
+    options.link(linker, location, validate)
     javaPackage = options.get(JAVA_PACKAGE)
   }
 
@@ -171,31 +166,15 @@ class ProtoFile private constructor(
     linker.validateEnumConstantNameUniqueness(types)
   }
 
-  /** Syntax version. */
-  enum class Syntax(private val string: String) {
-    PROTO_2("proto2"),
-    PROTO_3("proto3");
-
-    override fun toString(): String = string
-
-    companion object {
-      operator fun get(string: String): Syntax {
-        for (syntax in values()) {
-          if (syntax.string == string) return syntax
-        }
-        throw IllegalArgumentException("unexpected syntax: $string")
-      }
-    }
-
-  }
-
   companion object {
     val JAVA_PACKAGE = ProtoMember.get(Options.FILE_OPTIONS, "java_package")
+    val WIRE_PACKAGE = ProtoMember.get(Options.FILE_OPTIONS, "wire.wire_package")
 
     fun get(protoFileElement: ProtoFileElement): ProtoFile {
       val packageName = protoFileElement.packageName
 
-      val types = fromElements(packageName, protoFileElement.types)
+      val syntax = protoFileElement.syntax ?: Syntax.PROTO_2
+      val types = fromElements(packageName, protoFileElement.types, syntax)
 
       val services = fromElements(packageName, protoFileElement.services)
 

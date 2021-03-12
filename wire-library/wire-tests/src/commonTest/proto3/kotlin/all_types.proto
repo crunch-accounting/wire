@@ -19,7 +19,9 @@ package proto3.kotlin;
 
 import "google/protobuf/any.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 option java_package = "com.squareup.wire.proto3.kotlin.all_types";
 
@@ -56,6 +58,24 @@ message AllTypes {
   google.protobuf.ListValue list_value = 21;
   google.protobuf.Value value = 22;
   google.protobuf.NullValue null_value = 23;
+  google.protobuf.Empty empty = 24;
+  google.protobuf.Timestamp timestamp = 25;
+
+  optional int32 opt_int32 = 101;
+  optional uint32 opt_uint32 = 102;
+  optional sint32 opt_sint32 = 103;
+  optional fixed32 opt_fixed32 = 104;
+  optional sfixed32 opt_sfixed32 = 105;
+  optional int64 opt_int64 = 106;
+  optional uint64 opt_uint64 = 107;
+  optional sint64 opt_sint64 = 108;
+  optional fixed64 opt_fixed64 = 109;
+  optional sfixed64 opt_sfixed64 = 110;
+  optional bool opt_bool = 111;
+  optional float opt_float = 112;
+  optional double opt_double = 113;
+  optional string opt_string = 114;
+  optional bytes opt_bytes = 115;
 
   repeated int32 rep_int32 = 201 [packed = false];
   repeated uint32 rep_uint32 = 202 [packed = false];
@@ -76,10 +96,12 @@ message AllTypes {
   repeated NestedMessage rep_nested_message = 217 [packed = false];
   repeated google.protobuf.Any rep_any = 218;
   repeated google.protobuf.Duration rep_duration = 219;
-//  repeated google.protobuf.Struct rep_struct = 220;
-//  repeated google.protobuf.ListValue rep_list_value = 221;
-//  repeated google.protobuf.Value rep_value = 222;
-//  repeated google.protobuf.NullValue rep_null_value = 223;
+  repeated google.protobuf.Struct rep_struct = 220;
+  repeated google.protobuf.ListValue rep_list_value = 221;
+  repeated google.protobuf.Value rep_value = 222;
+  repeated google.protobuf.NullValue rep_null_value = 223 [packed = false];
+  repeated google.protobuf.Empty rep_empty = 224;
+  repeated google.protobuf.Timestamp rep_timestamp = 225;
 
   repeated int32 pack_int32 = 301 [packed = true];
   repeated uint32 pack_uint32 = 302 [packed = true];
@@ -95,7 +117,7 @@ message AllTypes {
   repeated float pack_float = 312 [packed = true];
   repeated double pack_double = 313 [packed = true];
   repeated NestedEnum pack_nested_enum = 316 [packed = true];
-//  repeated google.protobuf.NullValue pack_null_value = 323 [packed = true];
+  repeated google.protobuf.NullValue pack_null_value = 323 [packed = true];
 
   map<int32, int32> map_int32_int32 = 501;
   map<string, string> map_string_string = 502;
@@ -103,20 +125,25 @@ message AllTypes {
   map<string, NestedEnum> map_string_enum = 504;
   map<int32, google.protobuf.Any> map_int32_any = 518;
   map<int32, google.protobuf.Duration> map_int32_duration = 519;
-//  map<int32, google.protobuf.Struct> map_int32_struct = 520;
-//  map<int32, google.protobuf.ListValue> map_int32_list_value = 521;
-//  map<int32, google.protobuf.Value> map_int32_value = 522;
-//  map<int32, google.protobuf.NullValue> map_int32_null_value = 523;
+  map<int32, google.protobuf.Struct> map_int32_struct = 520;
+  map<int32, google.protobuf.ListValue> map_int32_list_value = 521;
+  map<int32, google.protobuf.Value> map_int32_value = 522;
+  map<int32, google.protobuf.NullValue> map_int32_null_value = 523;
+  map<int32, google.protobuf.Empty> map_int32_empty = 524;
+  map<int32, google.protobuf.Timestamp> map_int32_timestamp = 525;
 
+  // We don't support `Value` and `NullValue` in oneof's.
   oneof choice {
     string oneof_string = 601;
     int32 oneof_int32 = 602;
     NestedMessage oneof_nested_message = 603;
-    google.protobuf.Any oneof_int32_any = 618;
-    google.protobuf.Duration oneof_int32_duration = 619;
-//    google.protobuf.Struct oneof_int32_struct = 620;
-//    google.protobuf.ListValue oneof_int32_list_value = 621;
-//    google.protobuf.Value oneof_int32_value = 622;
-//    google.protobuf.NullValue oneof_int32_null_value = 623;
+    google.protobuf.Any oneof_any = 618;
+    google.protobuf.Duration oneof_duration = 619;
+    google.protobuf.Struct oneof_struct = 620;
+    google.protobuf.ListValue oneof_list_value = 621;
+    // google.protobuf.Value oneof_value = 622;
+    // google.protobuf.NullValue oneof_null_value = 623;
+    google.protobuf.Empty oneof_empty = 624;
+    google.protobuf.Timestamp oneof_timestamp = 625;
   }
 }

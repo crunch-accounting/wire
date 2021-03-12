@@ -15,18 +15,18 @@
  */
 package com.squareup.wire.internal
 
+import com.squareup.wire.GrpcException
 import com.squareup.wire.GrpcResponse
+import com.squareup.wire.GrpcStatus
 import com.squareup.wire.ProtoAdapter
 import com.squareup.wire.use
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.channels.consumeEach
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Headers.Companion.headersOf
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody
@@ -95,7 +95,7 @@ internal fun <R : Any> SendChannel<R>.readFromResponseBodyCallback(
               send(message)
             }
 
-            close(response.grpcStatusToException())
+            close(response.grpcResponseToException())
           }
         }
       }
@@ -110,22 +110,20 @@ internal fun <R : Any> SendChannel<R>.readFromResponseBodyCallback(
  * 2. write it to the stream (blocking)
  * 3. repeat. We also have to wait for all 2s to end before closing the writer
  */
-internal fun <S : Any> ReceiveChannel<S>.writeToRequestBody(
+internal suspend fun <S : Any> ReceiveChannel<S>.writeToRequestBody(
   requestBody: PipeDuplexRequestBody,
   requestAdapter: ProtoAdapter<S>,
   callForCancel: Call
 ) {
-  CoroutineScope(Dispatchers.IO).launch {
-    requestBody.messageSink(requestAdapter, callForCancel).use { requestWriter ->
-      var success = false
-      try {
-        consumeEach { message ->
-          requestWriter.write(message)
-        }
-        success = true
-      } finally {
-        if (!success) requestWriter.cancel()
+  requestBody.messageSink(requestAdapter, callForCancel).use { requestWriter ->
+    var success = false
+    try {
+      consumeEach { message ->
+        requestWriter.write(message)
       }
+      success = true
+    } finally {
+      if (!success) requestWriter.cancel()
     }
   }
 }
@@ -140,29 +138,47 @@ internal fun <R : Any> GrpcResponse.messageSource(
   return GrpcMessageSource(responseSource, protoAdapter, grpcEncoding)
 }
 
+/** Returns an exception if the response does not follow the protocol. */
 private fun GrpcResponse.checkGrpcResponse() {
-  val grpcStatus = headers["grpc-status"]
-  if (grpcStatus != null && grpcStatus != "0") {
-    throw IOException("grpc failed: status=${code}, grpc-status=$grpcStatus")
-  }
-
   val contentType = body!!.contentType()
   if (code != 200 ||
       contentType == null ||
       contentType.type != "application" ||
       contentType.subtype != "grpc" && contentType.subtype != "grpc+proto") {
-    throw IOException("grpc failed: status=${code}, content-type=$contentType")
+    throw IOException("expected gRPC but was HTTP status=$code, content-type=$contentType")
   }
 }
 
-/** Maps the response trailer to either success (null) or an exception. */
-internal fun GrpcResponse.grpcStatusToException(): IOException? {
-  val grpcStatus = trailers().get("grpc-status") ?: header("grpc-status")
-  return when (grpcStatus) {
-    "0" -> null
-    else -> {
-      // also see https://github.com/grpc/grpc-go/blob/master/codes/codes.go#L31
-      IOException("unexpected or absent grpc-status: $grpcStatus")
-    }
+/** Returns an exception if the gRPC call didn't have a grpc-status of 0. */
+internal fun GrpcResponse.grpcResponseToException(suppressed: IOException? = null): IOException? {
+  var trailers = headersOf()
+  var transportException = suppressed
+  try {
+    trailers = trailers()
+  } catch (e: IOException) {
+    if (transportException == null) transportException = e
   }
+
+  val grpcStatus = trailers["grpc-status"] ?: header("grpc-status")
+  val grpcMessage = trailers["grpc-message"] ?: header("grpc-message")
+
+  if (transportException != null) {
+    return IOException(
+        "gRPC transport failure" +
+            " (HTTP status=$code, grpc-status=$grpcStatus, grpc-message=$grpcMessage)",
+        transportException
+    )
+  }
+
+  if (grpcStatus != "0") {
+    val grpcStatusInt = grpcStatus?.toIntOrNull()
+      ?: throw IOException(
+          "gRPC transport failure" +
+              " (HTTP status=$code, grpc-status=$grpcStatus, grpc-message=$grpcMessage)"
+      )
+
+    return GrpcException(GrpcStatus.get(grpcStatusInt), grpcMessage)
+  }
+
+  return null // Success.
 }

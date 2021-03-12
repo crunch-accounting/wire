@@ -33,9 +33,11 @@ open class WireExtension(project: Project) {
   internal val protoJars = mutableSetOf<ProtoRootSet>()
   internal val roots = mutableSetOf<String>()
   internal val prunes = mutableSetOf<String>()
+  internal val moves = mutableListOf<Move>()
   internal var onlyVersion: String? = null
   internal var sinceVersion: String? = null
   internal var untilVersion: String? = null
+  internal var permitPackageCycles: Boolean = false
 
   @Input
   @Optional
@@ -92,6 +94,16 @@ open class WireExtension(project: Project) {
     this.onlyVersion = onlyVersion
   }
 
+  @Input
+  fun permitPackageCycles() = permitPackageCycles
+
+  /**
+   * See [com.squareup.wire.schema.WireRun.permitPackageCycles]
+   */
+  fun permitPackageCycles(permitPackageCycles: Boolean) {
+    this.permitPackageCycles = permitPackageCycles
+  }
+
   /**
    * A user-provided file listing [roots] and [prunes]
    */
@@ -103,10 +115,16 @@ open class WireExtension(project: Project) {
   @get:Input
   val outputs = mutableListOf<WireOutput>()
 
-  /** Not supported, do not use. */
+  /**
+   * True to emit `.proto` files into the output resources. Use this when your `.jar` file can be
+   * used as a library for other proto or Wire projects.
+   *
+   * Note that only the `.proto` files used in the library will be included, and these files will
+   * have tree-shaking applied.
+   */
   @get:Input
   @get:Optional
-  var proto3Preview: String? = null
+  var protoLibrary = false
 
   @InputFiles
   @Optional
@@ -188,8 +206,11 @@ open class WireExtension(project: Project) {
       // map to SourceDirectorySet which does the work for us!
       val protoTree = objectFactory.sourceDirectorySet(name, "Wire proto sources for $name.")
       protoTree.srcDirs(protoRootSet.srcDirs)
-      protoTree.filter.include("**/*.proto")
-      protoTree.filter.include(protoRootSet.includes)
+      if (protoRootSet.includes.isEmpty()) {
+        protoTree.filter.include("**/*.proto")
+      } else {
+        protoTree.filter.include(protoRootSet.includes)
+      }
       sourceTrees.add(protoTree)
     }
 
@@ -220,6 +241,12 @@ open class WireExtension(project: Project) {
     val customOutput = objectFactory.newInstance(CustomOutput::class.java)
     action.execute(customOutput)
     outputs += customOutput
+  }
+
+  fun move(action: Action<Move>) {
+    val move = objectFactory.newInstance(Move::class.java)
+    action.execute(move)
+    moves += move
   }
 
   open class ProtoRootSet {

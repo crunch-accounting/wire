@@ -33,7 +33,10 @@ actual object CoreLoader : Loader {
   private const val ANY_PROTO = "google/protobuf/any.proto"
   private const val DESCRIPTOR_PROTO = "google/protobuf/descriptor.proto"
   private const val DURATION_PROTO = "google/protobuf/duration.proto"
+  private const val EMPTY_PROTO = "google/protobuf/empty.proto"
   private const val STRUCT_PROTO = "google/protobuf/struct.proto"
+  private const val TIMESTAMP_PROTO = "google/protobuf/timestamp.proto"
+  private const val WRAPPERS_PROTO = "google/protobuf/wrappers.proto"
   private const val WIRE_EXTENSIONS_PROTO = "wire/extensions.proto"
 
   /** A special base directory used for Wire's built-in .proto files. */
@@ -62,7 +65,12 @@ actual object CoreLoader : Loader {
     return path == ANY_PROTO ||
         path == DESCRIPTOR_PROTO ||
         path == DURATION_PROTO ||
+        path == EMPTY_PROTO ||
         path == STRUCT_PROTO ||
+        path == TIMESTAMP_PROTO ||
+        path == WRAPPERS_PROTO ||
         path == WIRE_EXTENSIONS_PROTO
   }
+
+  override fun withErrors(errors: ErrorCollector) = this
 }

@@ -17,6 +17,9 @@ package com.squareup.wire.schema
 
 import com.squareup.wire.ConsoleWireLogger
 import com.squareup.wire.WireLogger
+import com.squareup.wire.schema.PartitionedSchema.Partition
+import com.squareup.wire.schema.internal.DagChecker
+import com.squareup.wire.schema.internal.TypeMover
 import java.nio.file.FileSystem
 import java.nio.file.FileSystems
 import java.nio.file.Path
@@ -30,9 +33,10 @@ import java.nio.file.Path
  *
  *  2. Validate the schema and resolve references between types.
  *
- *  3. Optionally prune the schema. This builds a new schema that is a subset of the original. The
- *     new schema contains only types that are both transitively reachable from [treeShakingRoots]
- *     and not in [treeShakingRubbish].
+ *  3. Optionally refactor the schema. This builds a new schema that is a subset of the original.
+ *     The new schema contains only types that are both transitively reachable from
+ *     [treeShakingRoots] and not in [treeShakingRubbish]. Types are moved to different files as
+ *     specified by [moves].
  *
  *  4. Call each target. It will generate sources for protos in the [sourcePath] that are in its
  *     [Target.includes], that are not in its [Target.excludes], and that haven't already been
@@ -138,6 +142,12 @@ data class WireRun(
   val treeShakingRubbish: List<String> = listOf(),
 
   /**
+   * Types to move before generating code or producing other output. Use this with [ProtoTarget] to
+   * refactor proto schemas safely.
+   */
+  val moves: List<TypeMover.Move> = listOf(),
+
+  /**
    * The exclusive lower bound of the version range. Fields with `until` values greater than this
    * are retained.
    */
@@ -161,25 +171,60 @@ data class WireRun(
    */
   val targets: List<Target>,
 
-  /** True to build proto3 artifacts. This is unsupported and does not work. */
-  val proto3Preview: Boolean = false
-) {
+  /**
+   * A map from module dir to module info which dictates how the loaded types are partitioned and
+   * generated.
+   *
+   * When empty everything is generated in the root output directory.
+   * If desired, multiple modules can be specified along with dependencies between them. Types
+   * which appear in dependencies will not be re-generated.
+   */
+  val modules: Map<String, Module> = emptyMap(),
 
-  fun execute(fs: FileSystem = FileSystems.getDefault(), logger: WireLogger = ConsoleWireLogger()) {
-    return NewSchemaLoader(fs).use { newSchemaLoader ->
-      execute(fs, logger, newSchemaLoader)
+  /**
+   * If true, no validation will be executed to check package cycles.
+   */
+  val permitPackageCycles: Boolean = false,
+) {
+  data class Module(
+    val dependencies: Set<String> = emptySet(),
+    val pruningRules: PruningRules? = null
+  )
+
+  init {
+    val dagChecker = DagChecker(modules.keys) { moduleName ->
+      modules.getValue(moduleName).dependencies
+    }
+    val cycles = dagChecker.check()
+    require(cycles.isEmpty()) {
+      buildString {
+        append("ERROR: Modules contain dependency cycle(s):\n")
+        for (cycle in cycles) {
+          append(" - ")
+          append(cycle)
+          append('\n')
+        }
+      }
     }
   }
 
-  private fun execute(fs: FileSystem, logger: WireLogger, schemaLoader: NewSchemaLoader) {
+  fun execute(fs: FileSystem = FileSystems.getDefault(), logger: WireLogger = ConsoleWireLogger()) {
+    return SchemaLoader(fs).use { schemaLoader ->
+      execute(fs, logger, schemaLoader)
+    }
+  }
+
+  private fun execute(fs: FileSystem, logger: WireLogger, schemaLoader: SchemaLoader) {
+    schemaLoader.permitPackageCycles = permitPackageCycles
     schemaLoader.initRoots(sourcePath, protoPath)
 
     // Validate the schema and resolve references
     val fullSchema = schemaLoader.loadSchema()
     val sourceLocationPaths = schemaLoader.sourcePathFiles.map { it.location.path }
+    val moveTargetPaths = moves.map { it.targetPath }
 
-    // Optionally prune the schema.
-    val schema = treeShake(fullSchema, logger)
+    // Refactor the schema.
+    val schema = refactorSchema(fullSchema, logger)
 
     val targetToEmittingRules = targets.associateWith {
       EmittingRules.Builder()
@@ -189,29 +234,50 @@ data class WireRun(
     }
     val targetsExclusiveLast = targets.sortedBy { it.exclusive }
 
-    // Call each target.
-    val skippedForSyntax = mutableListOf<ProtoFile>()
+    val partitions = if (modules.isNotEmpty()) {
+      val partitionedSchema = schema.partition(modules)
+      // TODO handle errors and warnings
+      partitionedSchema.partitions
+    } else {
+      // Synthesize a single partition that includes everything from the schema.
+      mapOf(null to Partition(schema))
+    }
+
+    val skippedForSyntax = mutableSetOf<Location>()
     val claimedPaths = mutableMapOf<Path, String>()
-    for (protoFile in schema.protoFiles) {
-      if (protoFile.syntax == ProtoFile.Syntax.PROTO_3 && !proto3Preview) {
-        skippedForSyntax += protoFile
-        continue
-      }
-      if (!sourceLocationPaths.contains(protoFile.location.path)) {
-        continue
+    for ((moduleName, partition) in partitions) {
+      val targetToSchemaHandler = targets.associateWith {
+        it.newHandler(
+            partition.schema, moduleName, partition.transitiveUpstreamTypes, fs, logger,
+            schemaLoader
+        )
       }
 
-      val claimedDefinitions = ClaimedDefinitions()
-      claimedDefinitions.claim(ProtoType.ANY)
+      // Call each target.
+      for (protoFile in partition.schema.protoFiles) {
+        if (protoFile.location.path !in sourceLocationPaths &&
+            protoFile.location.path !in moveTargetPaths) {
+          continue
+        }
 
-      for (target in targetsExclusiveLast) {
-        val schemaHandler = target.newHandler(schema, fs, logger, schemaLoader)
-        schemaHandler.handle(
-            protoFile,
-            targetToEmittingRules[target]!!,
-            claimedDefinitions,
-            claimedPaths,
-            isExclusive = target.exclusive)
+        // Remove types from the file which are not owned by this partition.
+        val filteredProtoFile = protoFile.copy(
+            types = protoFile.types.filter { it.type in partition.types },
+            services = protoFile.services.filter { it.type in partition.types }
+        )
+
+        val claimedDefinitions = ClaimedDefinitions()
+        claimedDefinitions.claim(ProtoType.ANY)
+
+        for (target in targetsExclusiveLast) {
+          val schemaHandler = targetToSchemaHandler.getValue(target)
+          schemaHandler.handle(
+              filteredProtoFile,
+              targetToEmittingRules.getValue(target),
+              claimedDefinitions,
+              claimedPaths,
+              isExclusive = target.exclusive)
+        }
       }
     }
 
@@ -232,17 +298,18 @@ data class WireRun(
     if (skippedForSyntax.isNotEmpty()) {
       logger.info("""Skipped .proto files with unsupported syntax. Add this line to fix:
           |  syntax = "proto2";
-          |  ${skippedForSyntax.joinToString(separator = "\n  ") { it.location.toString() }}
+          |  ${skippedForSyntax.joinToString(separator = "\n  ") { it.toString() }}
           """.trimMargin())
     }
   }
 
-  /** Returns a subset of schema with unreachable and unwanted elements removed. */
-  private fun treeShake(schema: Schema, logger: WireLogger): Schema {
+  /** Returns a transformed schema with unwanted elements removed and moves applied. */
+  private fun refactorSchema(schema: Schema, logger: WireLogger): Schema {
     if (treeShakingRoots == listOf("*") &&
         treeShakingRubbish.isEmpty() &&
         sinceVersion == null &&
-        untilVersion == null) {
+        untilVersion == null &&
+        moves.isEmpty()) {
       return schema
     }
 
@@ -254,7 +321,7 @@ data class WireRun(
         .only(onlyVersion)
         .build()
 
-    val result = schema.prune(pruningRules)
+    val prunedSchema = schema.prune(pruningRules)
 
     for (rule in pruningRules.unusedRoots()) {
       logger.info("Unused element in treeShakingRoots: $rule")
@@ -264,6 +331,6 @@ data class WireRun(
       logger.info("Unused element in treeShakingRubbish: $rule")
     }
 
-    return result
+    return TypeMover(prunedSchema, moves).move()
   }
 }

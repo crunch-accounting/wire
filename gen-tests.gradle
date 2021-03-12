@@ -48,8 +48,7 @@ task generateJavaTests(type: JavaExec) {
   args = [
       '--proto_path=wire-library/wire-tests/src/commonTest/proto/java',
       '--java_out=wire-library/wire-tests/src/jvmJavaTest/proto-java',
-      'google/protobuf/any.proto',
-      'google/protobuf/descriptor.proto',
+      '--emit_applied_options',
       '--excludes=squareup.options.*',
   ] + PROTOS
 }
@@ -64,8 +63,6 @@ task generateNoOptionsTests(type: JavaExec) {
   args = [
       '--proto_path=wire-library/wire-tests/src/commonTest/proto/java',
       '--java_out=wire-library/wire-tests/src/jvmJavaNoOptionsTest/proto-java',
-      'google/protobuf/any.proto',
-      'google/protobuf/descriptor.proto',
       '--excludes=google.protobuf.*',
       '--excludes=squareup.options.*',
       '--excludes=com.squareup.wire.ModelEvaluation',
@@ -87,41 +84,70 @@ task generateCompactTests(type: JavaExec) {
   ]
 }
 
-// GSON (uses COMPACT)
+// GSON
 
-task copyAllTypesTest(type: Copy) {
-  from 'wire-tests/src/jvmTest/proto-java.compact/com/squareup/wire/protos/alltypes/AllTypes.java'
-  into 'wire-gson-support/src/test/java/com/squareup/wire/protos/alltypes'
-}
-task copyRepeatedPackedAndMapTest(type: Copy) {
-  from 'wire-tests/src/jvmTest/proto-java.compact/com/squareup/wire/protos/RepeatedPackedAndMap.java'
-  into 'wire-gson-support/src/test/java/com/squareup/wire/protos'
-}
-task generateKotlinGsonTests(type: JavaExec) {
-  group = 'Generate Tests'
-  description = 'Generates Kotlin classes for gson tests'
+task generateGsonAdapterCompactJavaTests(type: JavaExec) {
+  group = 'Generate GsonAdapter Compact Java Tests'
+  description = 'Generates compat Java classes from the GsonAdapter test protos'
   classpath = configurations.wire
   main = 'com.squareup.wire.WireCompiler'
   args = [
-          '--proto_path=wire-library/wire-tests/src/commonTest/proto/kotlin',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
+          '--java_out=wire-library/wire-gson-support/src/test/java',
+          '--compact',
+          'all_types_proto2.proto'
+  ]
+}
+
+task generateGsonAdapterJavaTests(type: JavaExec) {
+  group = 'Generate GsonAdapter Java Tests'
+  description = 'Generates Java classes from the GsonAdapter test protos'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
+          '--java_out=wire-library/wire-gson-support/src/test/java',
+          'collection_types.proto',
+          'dinosaur_java.proto',
+          'period_java.proto',
+          'keyword_java.proto',
+  ]
+}
+
+task generateGsonAdapterInteropKotlinTests(type: JavaExec) {
+  group = 'Generate GsonAdapter Java interop Kotlin Tests'
+  description = 'Generates Java interop Kotlin classes from the GsonAdapter test protos'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
           '--kotlin_out=wire-library/wire-gson-support/src/test/java',
           '--java_interop',
-          'keyword.proto',
+          'dinosaur_java_interop_kotlin.proto',
+          'period_java_interop_kotlin.proto',
+          'keyword_kotlin.proto',
   ]
 }
-task generateJavaGsonTests(type: JavaExec) {
-  group = 'Generate Tests'
-  description = 'Generates Java classes for gson tests'
+
+task generateGsonAdapterKotlinTests(type: JavaExec) {
+  group = 'Generate GsonAdapter Kotlin Tests'
+  description = 'Generates Kotlin classes from the GsonAdapter test protos'
   classpath = configurations.wire
   main = 'com.squareup.wire.WireCompiler'
   args = [
-          '--proto_path=wire-library/wire-tests/src/commonTest/proto/java',
-          '--java_out=wire-library/wire-gson-support/src/test/java',
-          'keyword.proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
+          '--kotlin_out=wire-library/wire-gson-support/src/test/java',
+          'dinosaur_kotlin.proto',
+          'period_kotlin.proto',
   ]
 }
-task generateGsonTests(dependsOn: [copyAllTypesTest, copyRepeatedPackedAndMapTest,
-    generateKotlinGsonTests, generateJavaGsonTests]) {
+
+task generateGsonTests(dependsOn: [generateGsonAdapterCompactJavaTests,
+    generateGsonAdapterJavaTests, generateGsonAdapterInteropKotlinTests,
+    generateGsonAdapterKotlinTests]) {
   group = 'Generate Tests'
   description = 'Generates Java and Kotlin classes that use Gson from the test protos'
 }
@@ -184,6 +210,8 @@ task generateKotlinTests(type: JavaExec) {
   args = [
       '--proto_path=wire-library/wire-tests/src/commonTest/proto/kotlin',
       '--kotlin_out=wire-library/wire-tests/src/commonTest/proto-kotlin',
+      '--emit_applied_options',
+      '--kotlin_box_oneofs_min_size=8',
       'all_types.proto',
       'custom_options.proto',
       'deprecated.proto',
@@ -192,12 +220,11 @@ task generateKotlinTests(type: JavaExec) {
       'external_message.proto',
       'foreign.proto',
       'form.proto',
-      'google/protobuf/any.proto',
-      'google/protobuf/descriptor.proto',
       'map.proto',
       'no_fields.proto',
       'one_of.proto',
       'optional_enum.proto',
+      'option_redacted.proto',
       'packed_encoding.proto',
       'person.proto',
       'redacted_one_of.proto',
@@ -220,7 +247,21 @@ task generateProto3KotlinTests(type: JavaExec) {
   args = [
           '--proto_path=wire-library/wire-tests/src/commonTest/proto3/kotlin',
           '--kotlin_out=wire-library/wire-tests/src/commonTest/proto-kotlin',
-          '--proto3-preview=UNSUPPORTED',
+          'all_types.proto',
+          'person.proto',
+  ]
+}
+
+// Java PROTO3
+
+task generateProto3JavaTests(type: JavaExec) {
+  group = 'Generate Tests'
+  description = 'Generates Kotlin classes from the test proto3s'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+          '--proto_path=wire-library/wire-tests/src/commonTest/proto3/java',
+          '--java_out=wire-library/wire-tests/src/jvmJavaTest/proto-java',
           'all_types.proto',
           'person.proto',
   ]
@@ -267,15 +308,16 @@ task generateKotlinJavaInteropTests(type: JavaExec) {
       '--proto_path=wire-library/wire-tests/src/commonTest/proto/kotlin',
       '--kotlin_out=wire-library/wire-tests/src/jvmKotlinInteropTest/proto-kotlin',
       '--java_interop',
+      '--kotlin_box_oneofs_min_size=8',
       'all_types.proto',
       'deprecated.proto',
       'external_message.proto',
       'foreign.proto',
-      'google/protobuf/any.proto',
-      'google/protobuf/descriptor.proto',
+      'form.proto',
       'map.proto',
       'no_fields.proto',
       'one_of.proto',
+      'option_redacted.proto',
       'packed_encoding.proto',
       'percents_in_kdoc.proto',
       'person.proto',
@@ -286,6 +328,66 @@ task generateKotlinJavaInteropTests(type: JavaExec) {
       'simple_message.proto',
       'unknown_fields.proto',
       'uses_any.proto',
+  ]
+}
+
+// KOTLIN SERIALIZATION
+
+task generateKotlinSerializationTests(type: JavaExec) {
+  group = 'Generate Tests'
+  description = 'Generates Kotlin classes for kotlin.serialization'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+          '--proto_path=wire-library/wire-tests/src/commonTest/proto/kotlin-serialization',
+          '--kotlin_out=wire-library/wire-tests/src/commonTest/proto-kotlin-serialization',
+          '--emit_kotlin_serialization_UNSUPPORTED',
+          'cdn_resource.proto',
+  ]
+}
+
+// SWIFT
+
+task generateSwiftTests(type: JavaExec) {
+  def swiftOut = 'wire-library/wire-tests-swift/src/main/swift'
+  doFirst {
+    def outFile = file(swiftOut)
+    outFile.deleteDir()
+    outFile.mkdir()
+  }
+
+  group = 'Generate Tests'
+  description = 'Generates Swift classes from the test protos'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+      '--proto_path=wire-library/wire-tests/src/commonTest/proto/kotlin',
+      "--swift_out=$swiftOut",
+      'all_types.proto',
+      'custom_options.proto',
+      'deprecated.proto',
+      'deprecated_enum.proto',
+//      'edge_cases.proto',
+      'external_message.proto',
+      'foreign.proto',
+      'form.proto',
+//      'keyword.proto',
+      'map.proto',
+      'no_fields.proto',
+      'one_of.proto',
+      'option_redacted.proto',
+      'optional_enum.proto',
+      'packed_encoding.proto',
+      'percents_in_kdoc.proto',
+      'person.proto',
+      'redacted_one_of.proto',
+//      'redacted_test.proto',
+      'resursive_map.proto',
+      'same_name_enum.proto',
+//      'simple_message.proto',
+      'to_string.proto',
+      'unknown_fields.proto',
+//      'uses_any.proto',
   ]
 }
 
@@ -323,10 +425,10 @@ task generateMoshiAdapterCompactJavaTests(type: JavaExec) {
   classpath = configurations.wire
   main = 'com.squareup.wire.WireCompiler'
   args = [
-          '--proto_path=wire-library/wire-moshi-adapter/src/test/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
           '--java_out=wire-library/wire-moshi-adapter/src/test/java',
           '--compact',
-          'all_types.proto'
+          'all_types_proto2.proto'
   ]
 }
 
@@ -336,7 +438,8 @@ task generateMoshiAdapterJavaTests(type: JavaExec) {
   classpath = configurations.wire
   main = 'com.squareup.wire.WireCompiler'
   args = [
-          '--proto_path=wire-library/wire-moshi-adapter/src/test/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
           '--java_out=wire-library/wire-moshi-adapter/src/test/java',
           'collection_types.proto',
           'person_java.proto',
@@ -352,7 +455,8 @@ task generateMoshiAdapterInteropKotlinTests(type: JavaExec) {
   classpath = configurations.wire
   main = 'com.squareup.wire.WireCompiler'
   args = [
-          '--proto_path=wire-library/wire-moshi-adapter/src/test/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
           '--kotlin_out=wire-library/wire-moshi-adapter/src/test/java',
           '--java_interop',
           'person_java_interop_kotlin.proto',
@@ -368,7 +472,8 @@ task generateMoshiAdapterKotlinTests(type: JavaExec) {
   classpath = configurations.wire
   main = 'com.squareup.wire.WireCompiler'
   args = [
-          '--proto_path=wire-library/wire-moshi-adapter/src/test/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
           '--kotlin_out=wire-library/wire-moshi-adapter/src/test/java',
           'person_kotlin.proto',
           'dinosaur_kotlin.proto',
@@ -376,23 +481,84 @@ task generateMoshiAdapterKotlinTests(type: JavaExec) {
   ]
 }
 
+task generateMoshiTests(dependsOn: [generateMoshiAdapterCompactJavaTests,
+    generateMoshiAdapterJavaTests, generateMoshiAdapterInteropKotlinTests,
+    generateMoshiAdapterKotlinTests]) {
+  group = 'Generate Tests'
+  description = 'Generates Java and Kotlin classes that use Moshi from the test protos'
+}
+
+// Shared Json tests.
+
+task generateSharedJsonCompactJavaTests(type: JavaExec) {
+  group = 'Generate Shared JSON Tests'
+  description = 'Generates compat Java classes for shared JSON tests'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto3',
+          '--java_out=wire-library/wire-tests/src/jvmJsonJavaTest/proto-java',
+          '--compact',
+          'all32.proto',
+          'all64.proto',
+          'all_types_proto2.proto',
+          'all_types_proto3_test_proto3_optional.proto',
+          'all_structs.proto',
+          'all_wrappers.proto',
+          'camel_case.proto',
+          'map_types.proto',
+          'pizza.proto',
+  ]
+}
+
+task generateSharedJsonKotlinTests(type: JavaExec) {
+  group = 'Generate Shared JSON Tests'
+  description = 'Generates Kotlin classes for shared JSON tests'
+  classpath = configurations.wire
+  main = 'com.squareup.wire.WireCompiler'
+  args = [
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto2',
+          '--proto_path=wire-library/wire-tests/src/commonTest/shared/proto/proto3',
+          '--kotlin_out=wire-library/wire-tests/src/jvmJsonKotlinTest/proto-kotlin',
+          '--java_interop',
+          'all32.proto',
+          'all64.proto',
+          'all_types_proto2.proto',
+          'all_types_proto3_test_proto3_optional.proto',
+          'all_structs.proto',
+          'all_wrappers.proto',
+          'camel_case.proto',
+          'map_types.proto',
+          'pizza.proto',
+  ]
+}
+
+task generateSharedJson(dependsOn: [generateSharedJsonCompactJavaTests,
+    generateSharedJsonKotlinTests]) {
+  group = 'Generate Tests'
+  description = 'Generates Java and Kotlin classes for shared JSON tests'
+}
+
 task generateTests(dependsOn: [generateJavaTests, generateCompactTests, generateNoOptionsTests,
     generateGsonTests, generateIncludesExcludesTests, generateAndroidTests,
     generateAndroidCompactTests, generateKotlinTests, generateKotlinServicesTests,
-    generateKotlinAndroidTests, generateKotlinJavaInteropTests, generateGrpcTests,
-    generateMoshiAdapterCompactJavaTests, generateMoshiAdapterJavaTests,
-    generateMoshiAdapterKotlinTests, generateMoshiAdapterInteropKotlinTests,
-    generateProto3KotlinTests]) {
+    generateKotlinAndroidTests, generateKotlinJavaInteropTests, generateSwiftTests,
+    generateGrpcTests, generateMoshiTests, generateProto3KotlinTests, generateProto3JavaTests,
+    generateSharedJson, generateKotlinSerializationTests]) {
   group = 'Generate Tests'
   description = 'Generates all test classes'
 }
 
-// TODO `wire-gson-support` mixes written and generated code. Needs to split them to add it here.
 task cleanGeneratedTests(type: Delete) {
   group = 'Generate Tests'
   description = 'Delete all generated tests'
   delete 'wire-grpc-tests/src/test/proto-grpc',
+         'wire-library/wire-gson-support/src/test/java/com/squareup/wire/protos',
+         'wire-library/wire-gson-support/src/test/java/squareup/proto2/keywords/',
          'wire-library/wire-moshi-adapter/src/test/java/com/squareup/wire/protos',
+         'wire-library/wire-moshi-adapter/src/test/java/squareup/proto2/keywords/',
+         'wire-library/wire-tests/src/commonTest/proto-java',
          'wire-library/wire-tests/src/commonTest/proto-kotlin',
          'wire-library/wire-tests/src/jvmJavaAndroidCompactTest/proto-java',
          'wire-library/wire-tests/src/jvmJavaAndroidTest/proto-java',
@@ -401,5 +567,7 @@ task cleanGeneratedTests(type: Delete) {
          'wire-library/wire-tests/src/jvmJavaPrunedTest/proto-java',
          'wire-library/wire-tests/src/jvmJavaTest/proto-java',
          'wire-library/wire-tests/src/jvmKotlinAndroidTest/proto-kotlin',
-         'wire-library/wire-tests/src/jvmKotlinInteropTest/proto-kotlin'
+         'wire-library/wire-tests/src/jvmKotlinInteropTest/proto-kotlin',
+         'wire-library/wire-tests/src/jvmJsonJavaTest/proto-java',
+         'wire-library/wire-tests/src/jvmJsonKotlinTest/proto-kotlin'
 }

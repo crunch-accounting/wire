@@ -18,7 +18,7 @@ package com.squareup.wire.schema
 import com.squareup.wire.schema.internal.parser.OneOfElement
 import kotlin.jvm.JvmStatic
 
-class OneOf private constructor(
+data class OneOf(
   val name: String,
   val documentation: String,
   val fields: List<Field>
@@ -29,9 +29,9 @@ class OneOf private constructor(
     }
   }
 
-  fun linkOptions(linker: Linker, syntaxRules: SyntaxRules) {
+  fun linkOptions(linker: Linker, syntaxRules: SyntaxRules, validate: Boolean) {
     for (field in fields) {
-      field.linkOptions(linker, syntaxRules)
+      field.linkOptions(linker, syntaxRules, validate)
     }
   }
 

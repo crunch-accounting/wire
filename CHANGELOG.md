@@ -1,6 +1,96 @@
 Change Log
 ==========
 
+Version 3.6.1
+-------------
+
+_2021-03-09_
+
+ * Fix: The Wire Gradle plugin now supports Java only Android projects.
+ * Fix: In the Wire Gradle plugin, `sourcePath` will now include only protos defined with `include`
+   if the option is present. It used to include all existing `.proto` files even if `include` was
+   used.
+ * New: Full support Optional Int64 and UInt64 for JSONString in Swift.
+
+Version 3.6.0
+-------------
+
+_2021-02-08_
+
+ * New: Automatically add a dependency when a `protoPath` or `protoSource` depends on a project.
+ * New: `protoPath` and `protoSource` dependencies are now *not* transitive by default.
+ * New: New protoLibrary option for the Wire Gradle plugin. Configuring a project as a protoLibrary
+   will cause the generated `.jar` file to include `.proto` sources.
+ * New: Code generation for plain gRPC server. The Kotlin target now has a new
+   `grpcServerCompatible` option which if set to `true` will generate gRPC server-compatible
+   classes.
+ * New: Introduce `GrpcException`.
+ * New: Add GrpcMethod tag to the request.
+ * New: Adds redacting support for Moshi JSON adapters.
+ * New: Publish plugin marker for Gradle plugin.
+ * Fix: Escape square brackets in Kotlin generated code documentation.
+ * Fix: Improved proto parsing performance.
+
+Version 3.5.0
+-------------
+
+_2020-10-27_
+
+ * New: Wire Gradle plugin improvements:
+   - A task is now created for each available sources (main, Android variants, etc).
+   - The `wire-runtime` dependency is automatically added.
+   - Generated code directories are automatically added into their module's source sets.
+ * New: Wire's proto parser now knows about `oneOfOptions`.
+ * New: Wire will throw when two enum constants are ambiguous, like `ZERO` and `zero`.
+ * New: Bytes options are not eligible anymore as annotation members.
+ * Fix: Optional fields in proto3 are now generated as nullable fields.
+ * Fix: JSON camel-casing is updated to fit latest protobuf specifications.
+ * Fix: Exception messages when gRPC fails have been improved.
+ * Fix: Allow `;` as entry separator in option maps.
+ * Fix: Enum constants are now properly escaped when conflicting with keywords of their generated
+ target platform.
+ * Fix: Update to KotlinPoet 1.7.2 which makes a lot of change in how Kotlin code is generated.
+
+Version 3.4.0
+-------------
+
+_2020-09-24_
+
+ * New: Stop emitting enum constant options as fields for Kotlin.
+ * New: The Wire Gradle plugin task is now cacheable.
+ * New: New GrpcCall function to help implement fakes.
+ * New: Change GrpcStreamingCall.execute() to support structured concurrency.
+
+Version 3.3.0
+-------------
+
+_2020-09-14_
+
+ * New: Proto3 support! This includes the new behaviors, the new types, and the JSON.
+ * New: Swift support for proto2 schemas. The details are in our [blog post][swiftblogpost].
+ * New: Wire will now throw an error when:
+   * two generated files end up overriding each other,
+   * imports form a cycle,
+   * packages form a cycle. This can be turned off with the flag `permitPackageCycles`,
+   * an option within the source set cannot be resolved,
+   * there are name duplications of members in a message, or of rpcs in a service,
+   * a map is used as an extension.
+ * New: Support for the `json_name` pseudo option.
+ * New: The `wire_package` file option allows one to set the JVM package where classes generated
+   from the concerned file will be placed. `wire_package` takes precedence over `java_package`.
+ * New: Lists and maps in Kotlin generated code are now immutable.
+ * New: Support UTF-8 with BOM in proto files.
+ * New: `wire.since` and `wire.until` have been renamed with the prefix `constant_` for
+   `EnumValueOptions`.
+ * New: Wire generates 1) annotations for options which 2) gets assigned to the generated code where
+   appropriate. Both behavior can be turn on or off via the flags:
+   * `emitDeclaredOptions`: True to emit types for options declared on messages, fields, etc.
+     Default to true,
+   * `emitAppliedOptions`: True to emit annotations for options applied on messages, fields, etc.
+     Default to false.
+ * Fix: Recursive map values.
+ * Fix: Long expressions in equals and encodedSize functions.
+
 Version 3.2.2
 -------------
 
@@ -704,3 +794,4 @@ Initial version.
 
  [jimfs]: https://github.com/google/jimfs
  [javapoet]: https://github.com/square/javapoet
+ [swiftblogpost]: https://cashapp.github.io/2020-08-19/wire-support-for-swift-part-1
