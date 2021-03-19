@@ -6,7 +6,28 @@ import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.TypeSpec;
 import com.squareup.wire.java.JavaGenerator;
-import com.squareup.wire.schema.*;
+import com.squareup.wire.schema.CoreLoader;
+import com.squareup.wire.schema.PruningRules;
+import com.squareup.wire.schema.Location;
+import com.squareup.wire.schema.ProtoFile;
+import com.squareup.wire.schema.Schema;
+import com.squareup.wire.schema.SchemaLoader;
+import com.squareup.wire.schema.Type;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.stream.Collectors;
+
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
@@ -15,16 +36,6 @@ import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 
-import java.io.File;
-import java.io.FileNotFoundException;
-import java.io.IOException;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.*;
-
-import static java.util.stream.Collectors.toList;
 
 /** A maven mojo that executes Wire's JavaGenerator. */
 @Mojo(name = "generate-sources", defaultPhase = LifecyclePhase.GENERATE_SOURCES)
@@ -149,15 +160,15 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     FileSystem fs = FileSystems.getDefault();
     SchemaLoader schemaLoader = new SchemaLoader(fs);
 
-    List<Path> sources = directories.stream().map(fs::getPath).collect(toList());
+    List<Path> sources = directories.stream().map(fs::getPath).collect(Collectors.toList());
     Map<Path, Path> directoryPaths = directoryPaths(Closer.create(), sources);
 
-    List<Location> allDirectories = directoryPaths.keySet().stream().map(Path::toString).map(Location::get).collect(toList());
+    List<Location> allDirectories = directoryPaths.keySet().stream().map(Path::toString).map(Location::get).collect(Collectors.toList());
     List<Location> sourcePath;
     List<Location> protoPath;
 
     if (!protos.isEmpty()) {
-      sourcePath = protos.stream().map( it -> locationOfProto(directoryPaths, it) ).collect(toList());
+      sourcePath = protos.stream().map( it -> locationOfProto(directoryPaths, it) ).collect(Collectors.toList());
       protoPath = allDirectories;
     } else {
       sourcePath = allDirectories;
