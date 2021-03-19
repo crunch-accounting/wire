@@ -198,7 +198,9 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     Optional<Map.Entry<Path, Path>> directoryEntry = directories.entrySet().stream().filter(d -> Files.exists(d.getValue().resolve(proto))).findFirst();
 
     if (directoryEntry.isEmpty()) {
-      if (CoreLoader.INSTANCE.isWireRuntimeProto(proto)) return Location.get(CoreLoader.WIRE_RUNTIME_JAR, proto);
+      if (CoreLoader.INSTANCE.isWireRuntimeProto(proto)) {
+        return Location.get(CoreLoader.WIRE_RUNTIME_JAR, proto);
+      }
       throw new RuntimeException(new FileNotFoundException("Failed to locate " + proto + " in " + directories.keySet()));
     }
 
