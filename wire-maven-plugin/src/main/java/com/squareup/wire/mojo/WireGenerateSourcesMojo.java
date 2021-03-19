@@ -1,10 +1,12 @@
 package com.squareup.wire.mojo;
 
 import com.google.common.base.Stopwatch;
+import com.google.common.io.Closer;
 import com.squareup.javapoet.ClassName;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.TypeSpec;
 import com.squareup.wire.java.JavaGenerator;
+import com.squareup.wire.schema.CoreLoader;
 import com.squareup.wire.schema.PruningRules;
 import com.squareup.wire.schema.Location;
 import com.squareup.wire.schema.ProtoFile;
@@ -12,11 +14,18 @@ import com.squareup.wire.schema.Schema;
 import com.squareup.wire.schema.SchemaLoader;
 import com.squareup.wire.schema.Type;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 import org.apache.maven.plugin.AbstractMojo;
@@ -26,6 +35,7 @@ import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+
 
 /** A maven mojo that executes Wire's JavaGenerator. */
 @Mojo(name = "generate-sources", defaultPhase = LifecyclePhase.GENERATE_SOURCES)
@@ -143,13 +153,28 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
     return result;
   }
 
+  @SuppressWarnings("UnstableApiUsage")
   private Schema loadSchema(List<String> directories, List<String> protos) throws IOException {
     Stopwatch stopwatch = Stopwatch.createStarted();
 
-    SchemaLoader schemaLoader = new SchemaLoader(FileSystems.getDefault());
+    FileSystem fs = FileSystems.getDefault();
+    SchemaLoader schemaLoader = new SchemaLoader(fs);
 
-    schemaLoader.initRoots( directories.stream().map(Location::get).collect(Collectors.toList()),
-            protos.stream().map(Location::get).collect(Collectors.toList()) );
+    List<Path> sources = directories.stream().map(fs::getPath).collect(Collectors.toList());
+    Map<Path, Path> directoryPaths = directoryPaths(Closer.create(), sources);
+
+    List<Location> allDirectories = directoryPaths.keySet().stream().map(Path::toString).map(Location::get).collect(Collectors.toList());
+    List<Location> sourcePath;
+    List<Location> protoPath;
+
+    if (!protos.isEmpty()) {
+      sourcePath = protos.stream().map( it -> locationOfProto(directoryPaths, it) ).collect(Collectors.toList());
+      protoPath = allDirectories;
+    } else {
+      sourcePath = allDirectories;
+      protoPath = List.of();
+    }
+    schemaLoader.initRoots( sourcePath, protoPath );
 
     Schema schema = schemaLoader.loadSchema();
 
@@ -157,6 +182,40 @@ public class WireGenerateSourcesMojo extends AbstractMojo {
             schema.getProtoFiles().size(), stopwatch));
 
     return schema;
+  }
+
+  @SuppressWarnings("UnstableApiUsage")
+  private static Map<Path, Path> directoryPaths(Closer closer, List<Path> sources )  {
+    Map<Path, Path> directories = new HashMap<>();
+    for (var source : sources) {
+      if (Files.isRegularFile(source)) {
+        FileSystem sourceFs;
+        try {
+          sourceFs = FileSystems.newFileSystem(source, WireGenerateSourcesMojo.class.getClassLoader());
+        } catch (IOException e) {
+          throw new RuntimeException(e);
+        }
+        closer.register(sourceFs);
+        directories.put(source, sourceFs.getRootDirectories().iterator().next());
+      } else {
+        directories.put(source, source);
+      }
+    }
+    return directories;
+  }
+
+  /** Searches {@code directories} trying to resolve {@code proto}. Returns the location if it is found. */
+  private static Location locationOfProto(Map<Path, Path> directories, String proto) {
+    Optional<Map.Entry<Path, Path>> directoryEntry = directories.entrySet().stream().filter(d -> Files.exists(d.getValue().resolve(proto))).findFirst();
+
+    if (directoryEntry.isEmpty()) {
+      if (CoreLoader.INSTANCE.isWireRuntimeProto(proto)) {
+        return Location.get(CoreLoader.WIRE_RUNTIME_JAR, proto);
+      }
+      throw new RuntimeException(new FileNotFoundException("Failed to locate " + proto + " in " + directories.keySet()));
+    }
+
+    return Location.get(directoryEntry.get().getKey().toString(), proto);
   }
 
   private void writeJavaFile(ClassName javaTypeName, TypeSpec typeSpec, Location location)
